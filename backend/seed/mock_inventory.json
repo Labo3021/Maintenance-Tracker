@@ -1,0 +1,120 @@
+{
+  "assets": [
+    {
+      "id": "asset-centrifuge-01",
+      "name": "Refrigerated Benchtop Centrifuge",
+      "category": "centrifuge",
+      "manufacturer": "Generic Lab Co.",
+      "model": "RC-5000",
+      "serial_number": "RC5K-2023-0142",
+      "location": "Bio Lab 204",
+      "status": "operational",
+      "last_service_date": "2026-05-10",
+      "service_interval_days": 180,
+      "last_calibration_date": "2025-11-15",
+      "calibration_interval_days": 365,
+      "parts": [
+        { "name": "Lid gasket", "part_number": "RC-GSK-01", "installed_date": "2025-11-01", "lifespan_days": 365 },
+        { "name": "Rotor O-ring set", "part_number": "RC-ORS-12", "installed_date": "2026-05-10", "lifespan_days": 180 }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "asset-autoclave-01",
+      "name": "Steam Autoclave",
+      "category": "autoclave",
+      "manufacturer": "SteriTech",
+      "model": "ST-80",
+      "serial_number": "ST80-2021-0077",
+      "location": "Prep Room 110",
+      "status": "needs_attention",
+      "last_service_date": "2026-04-20",
+      "service_interval_days": 180,
+      "last_calibration_date": "2026-01-10",
+      "calibration_interval_days": 180,
+      "parts": [
+        { "name": "Door seal", "part_number": "ST-DS-80", "installed_date": "2025-10-01", "lifespan_days": 365 },
+        { "name": "Water filter cartridge", "part_number": "ST-WF-3", "installed_date": "2026-08-01", "lifespan_days": 90 }
+      ],
+      "tasks": [
+        {
+          "id": "task-autoclave-seal",
+          "title": "Door seal leaking steam at bottom edge",
+          "description": "Reported by lab tech; inspect and replace door seal.",
+          "due_date": "2026-11-03",
+          "priority": "high",
+          "status": "open",
+          "source": "manual",
+          "created_at": "2026-10-28T09:15:00"
+        }
+      ]
+    },
+    {
+      "id": "asset-hplc-01",
+      "name": "HPLC System",
+      "category": "hplc",
+      "manufacturer": "ChromaWorks",
+      "model": "CW-1290",
+      "serial_number": "CW1290-2024-0019",
+      "location": "Analytical Lab 301",
+      "status": "operational",
+      "last_service_date": "2026-09-01",
+      "service_interval_days": 365,
+      "last_calibration_date": "2026-03-15",
+      "calibration_interval_days": 240,
+      "parts": [
+        { "name": "Pump seals", "part_number": "CW-PS-4", "installed_date": "2026-03-15", "lifespan_days": 270 },
+        { "name": "Inline solvent filter", "part_number": "CW-ISF-2", "installed_date": "2026-09-01", "lifespan_days": 120 }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "asset-biosafety-01",
+      "name": "Class II Biosafety Cabinet",
+      "category": "biosafety_cabinet",
+      "manufacturer": "CleanAir Systems",
+      "model": "BSC-4A2",
+      "serial_number": "BSC4-2022-0310",
+      "location": "Bio Lab 204",
+      "status": "operational",
+      "last_service_date": "2026-02-01",
+      "service_interval_days": 365,
+      "last_calibration_date": "2026-02-01",
+      "calibration_interval_days": 365,
+      "parts": [
+        { "name": "HEPA filter (downflow)", "part_number": "CA-HEPA-4", "installed_date": "2024-02-01", "lifespan_days": 1095 },
+        { "name": "UV lamp", "part_number": "CA-UV-30", "installed_date": "2026-01-15", "lifespan_days": 300 }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "asset-spectro-01",
+      "name": "UV-Vis Spectrophotometer",
+      "category": "spectrophotometer",
+      "manufacturer": "OptiLab",
+      "model": "UV-2600",
+      "serial_number": "UV26-2020-0088",
+      "location": "Analytical Lab 301",
+      "status": "out_of_service",
+      "last_service_date": "2025-12-05",
+      "service_interval_days": 365,
+      "last_calibration_date": "2026-04-01",
+      "calibration_interval_days": 180,
+      "parts": [
+        { "name": "Deuterium lamp", "part_number": "OL-D2-26", "installed_date": "2025-06-01", "lifespan_days": 500 }
+      ],
+      "tasks": [
+        {
+          "id": "task-spectro-lamp",
+          "title": "Baseline drift: lamp energy low error E-21",
+          "description": "Error E-21 on startup. Order replacement deuterium lamp.",
+          "due_date": "2026-10-25",
+          "priority": "critical",
+          "status": "open",
+          "source": "manual",
+          "created_at": "2026-10-20T14:00:00"
+        }
+      ]
+    }
+  ]
+}

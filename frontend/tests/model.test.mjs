@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {askAssistant} from '../src/api.mjs';
+import {canReopenTask, nextRecurringDate, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
+import {addTask, askAssistant, completeTask, loadWorkspace, toEquipment, toTask} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -124,15 +124,35 @@ test('AI adapter handles disconnected, failed, malformed, and aborted requests',
   await assert.rejects(askAssistant('/api', 'eq-001', 'Question', {signal: controller.signal, request: async (_url, options) => {options.signal.throwIfAborted();}}), {name: 'AbortError'});
 });
 
-test('photo diagnosis sends multipart data without setting Content-Type', async () => {
-  const image = new File(['photo'], 'fan.png', {type: 'image/png'});
-  let captured;
-  await askAssistant('/api', 'eq-003', 'Does this look damaged?', {
-    image,
-    request: async (_url, options) => {captured = options; return {ok: true, json: async () => ({answer: 'Check the manual.'})};}
-  });
-  assert.equal(captured.headers, undefined);
-  assert.equal(captured.body.get('equipment_id'), 'eq-003');
-  assert.equal(captured.body.get('message'), 'Does this look damaged?');
-  assert.equal(captured.body.get('image').name, 'fan.png');
+test('backend assets and tasks map to the frontend shapes', () => {
+  const item = toEquipment({id: 'a1', name: 'Polea', category: 'general', code: '02360.00', manufacturer: null,
+    model: null, location: 'Estante 1', photo_url: '/api/assets/a1/photo', quantity_missing: 7}, 'http://127.0.0.1:8000/api');
+  assert.deepEqual(item, {id: 'a1', name: 'Polea', category: 'general', manufacturer: '', model: '02360.00',
+    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7});
+  const open = toTask({id: 't1', asset_id: 'a1', title: 'Missing 7 units: Polea', due_date: '2026-10-31', status: 'open',
+    description: 'Counted 5 of 12.', notes: '', priority: 'medium', kind: 'stock'});
+  assert.equal(open.equipment_id, 'a1');
+  assert.equal(open.completed_at, null);
+  assert.equal(open.notes, 'Counted 5 of 12.');
+  assert.equal(toTask({...open, asset_id: 'a1', status: 'done', completed_on: '2026-10-30'}).completed_at, '2026-10-30');
+});
+
+test('backend calls use the right routes and surface error details', async () => {
+  const calls = [];
+  const request = async (url, options) => {
+    calls.push([options.method, url, options.body && JSON.parse(options.body)]);
+    return {ok: true, status: 200, json: async () => (url.endsWith('/assets') ? [{id: 'a1', name: 'X'}] : [])};
+  };
+  const data = await loadWorkspace('http://h/api/', {request});
+  assert.equal(data.equipment[0].id, 'a1');
+  await completeTask('http://h/api', {id: 't1', equipment_id: 'a1', completed_at: null}, {request});
+  await completeTask('http://h/api', {id: 't1', equipment_id: 'a1', completed_at: '2026-10-30'}, {request});
+  await addTask('http://h/api', {equipment_id: 'a1', title: 'Oil', due_date: '2026-11-01', notes: 'n'}, {request});
+  assert.deepEqual(calls.slice(2), [
+    ['POST', 'http://h/api/tasks/t1/complete', {}],
+    ['PATCH', 'http://h/api/assets/a1/tasks/t1', {status: 'open'}],
+    ['POST', 'http://h/api/assets/a1/tasks', {title: 'Oil', due_date: '2026-11-01', description: 'n'}]
+  ]);
+  const failing = async () => ({ok: false, status: 404, json: async () => ({detail: "Asset 'x' not found"})});
+  await assert.rejects(addTask('http://h/api', {equipment_id: 'x'}, {request: failing}), /Asset 'x' not found/);
 });
