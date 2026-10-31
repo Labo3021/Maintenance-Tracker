@@ -120,6 +120,29 @@ Manual and diagnosis tasks are one-off.
   from a calendar app on the same network. Google Calendar's "subscribe by URL" needs a
   public URL, so localhost won't work there.
 
+## Agents
+
+**Diagnostic agent** (`POST /api/agents/diagnose`, multipart `image` + optional `asset_id`, `notes`).
+Gemma works in a loop, choosing one tool per step: `inspect_image` (vision diagnosis), `check_inventory`
+(is the part in stock, and where), `query_manual` (the asset's linked PDF) and `schedule_task`
+(puts the repair on the schedule). It returns one report plus every step it took. Guardrails for a
+small model: at most `AGENT_MAX_STEPS` calls, no repeated calls, it must inspect the photo before
+finishing, and a fixed "guided" tool order takes over if the model goes off track (`mode` says which).
+Stock and actions in the report come from the tool results, never from the model's text.
+Takes ~20-60 s locally (`ai/agent.py`).
+
+**Proactive maintenance & reorder agent** (`ai/proactive.py`). Runs by itself 20 s after startup and
+then every `AGENT_INTERVAL_MINUTES` (default 360; 0 = only on demand). Finds service, calibration and
+part work due within `AGENT_DUE_DAYS` (default 7) or overdue, finds stock shortages, drafts purchase
+requisitions (one per inventory, never repeating items already on an open one), and has Gemma write a
+short briefing. Detection is plain rules, so nothing is missed if the model is down. State is kept in
+`storage/agent_state.json`.
+- `GET /api/agents/proactive`: latest briefing, due work, shortages, requisitions
+- `POST /api/agents/proactive/run`: run now
+- `PATCH /api/agents/requisitions/{id}` `{"status": "approved" | "dismissed" | "draft"}`
+
+Not covered: equipment run hours (nothing records them yet).
+
 ## Household, lab and workplace settings
 
 Diagnosis and the assistant adapt their language and safety advice to the asset's `environment`

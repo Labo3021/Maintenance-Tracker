@@ -4,6 +4,7 @@ import tempfile
 # Must run before config.py is imported: isolate storage and force mock mode.
 _tmp = tempfile.mkdtemp(prefix="labguard-test-")
 os.environ["AI_PROVIDER"] = "mock"
+os.environ["AGENT_INTERVAL_MINUTES"] = "0"  # tests trigger the proactive agent themselves
 os.environ["STORAGE_DIR"] = os.path.join(_tmp, "storage")
 os.environ["DATA_DIR"] = os.path.join(_tmp, "data")  # empty, so the backend seed is used
 

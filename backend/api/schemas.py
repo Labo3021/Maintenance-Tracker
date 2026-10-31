@@ -449,3 +449,79 @@ class AssistantAnswer(BaseModel):
 class AssetManualResult(BaseModel):
     asset: Asset
     manual: ManualInfo = Field(description="truncated=true means only the first part fits the model's context")
+
+
+# --- Agents --------------------------------------------------------------------
+
+
+class AgentStep(BaseModel):
+    tool: str
+    args: dict = {}
+    thought: str = ""
+    result: str = Field(description="Short summary of what the tool returned")
+
+
+class StockCheck(BaseModel):
+    part: str
+    match: Optional[str] = Field(default=None, description="Inventory item that matched, if any")
+    asset_id: Optional[str] = None
+    in_stock: Optional[bool] = Field(default=None, description="null when the inventory doesn't track quantities")
+    quantity: Optional[int] = None
+    location: Optional[str] = None
+
+
+class AgentReport(BaseModel):
+    summary: str
+    severity: Severity
+    safety: list[str] = []
+    parts: list[StockCheck] = Field(default=[], description="From check_inventory results, not model claims")
+    manual_notes: Optional[str] = None
+    actions_taken: list[str] = Field(default=[], description="Changes the agent made, e.g. a task it scheduled")
+    next_steps: list[str] = []
+
+
+class AgentDiagnoseResponse(BaseModel):
+    report: AgentReport
+    steps: list[AgentStep]
+    mode: Literal["agent", "guided", "mock"] = Field(
+        description="agent = Gemma chose the tools; guided = fixed tool order after the model went off track"
+    )
+    diagnosis: Optional[DiagnosisResult] = None
+    task: Optional[MaintenanceTask] = None
+
+
+RequisitionStatus = Literal["draft", "approved", "dismissed"]
+
+
+class RequisitionLine(BaseModel):
+    asset_id: str
+    name: str
+    code: Optional[str] = None
+    quantity: int = Field(ge=1)
+    location: Optional[str] = None
+    purchase_url: Optional[str] = None
+    reason: str
+
+
+class Requisition(BaseModel):
+    id: str
+    created_at: datetime
+    status: RequisitionStatus = "draft"
+    source: str = Field(description="Inventory the parts belong to")
+    lines: list[RequisitionLine]
+
+
+class RequisitionUpdate(BaseModel):
+    status: RequisitionStatus
+
+
+class ProactiveReport(BaseModel):
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None
+    running: bool = False
+    summary: str = ""
+    summary_source: ResultSource | Literal["none"] = "none"
+    due_soon: list[Alert] = []
+    shortages: int = 0
+    out_of_stock: int = 0
+    requisitions: list[Requisition] = []

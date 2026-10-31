@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, safeUrl, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
+import {addTask, askAssistant, completeTask, getProactiveReport, hasDetails, importInventory, listSources, loadWorkspace, runDiagnosticAgent, runProactiveAgent, safeUrl, setRequisitionStatus, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -243,4 +243,21 @@ test('household how-to details map for the details box, and only web links are k
   assert.equal(safeUrl('http://example.com/a'), 'http://example.com/a');
   assert.equal(safeUrl('ftp://example.com'), '');
   assert.equal(safeUrl(undefined), '');
+});
+
+test('agent calls use the agent routes', async () => {
+  const calls = [];
+  const request = async (url, options) => { calls.push([options.method || 'GET', url, options.body]); return {ok: true, status: 200, json: async () => ({report: {summary: 'ok'}, steps: []})}; };
+  const image = new File([new Uint8Array([1])], 'seal.png', {type: 'image/png'});
+  await runDiagnosticAgent('http://h/api', image, 'a1', 'leaking', {request});
+  await getProactiveReport('http://h/api', {request});
+  await runProactiveAgent('http://h/api', {request});
+  await setRequisitionStatus('http://h/api', 'req-1', 'approved', {request});
+  assert.deepEqual(calls.map(([method, url]) => `${method} ${url}`), [
+    'POST http://h/api/agents/diagnose', 'GET http://h/api/agents/proactive',
+    'POST http://h/api/agents/proactive/run', 'PATCH http://h/api/agents/requisitions/req-1']);
+  assert.equal(calls[0][2].get('asset_id'), 'a1');
+  assert.equal(calls[0][2].get('notes'), 'leaking');
+  assert.equal(calls[3][2], JSON.stringify({status: 'approved'}));
+  await assert.rejects(runDiagnosticAgent('http://h/api', image, 'a1', '', {request: async () => ({ok: false, status: 404, json: async () => ({detail: "Asset 'a1' not found"})})}), /not found/);
 });

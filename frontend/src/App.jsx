@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {addEquipment, addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, sourceLabel, uploadManual} from './api.mjs';
+import {addEquipment, addTask, askAssistant, completeTask, getProactiveReport, hasDetails, importInventory, listSources, loadWorkspace, runDiagnosticAgent, runProactiveAgent, setRequisitionStatus, sourceLabel, uploadManual} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const EMPTY = {schema_version: 1, equipment: [], tasks: []};
@@ -134,7 +134,56 @@ function ItemDetails({item, onClose}) {
   </section>;
 }
 
-function Assistant({equipment, onManualUploaded}) {
+const TOOL_LABELS = {inspect_image: 'Inspected the photo', check_inventory: 'Checked inventory', query_manual: 'Read the manual', schedule_task: 'Scheduled a task'};
+
+function AgentResult({result}) {
+  const {report, steps, mode} = result;
+  return <div className="agent-result">
+    <p><span className={`agent-severity ${report.severity}`}>{report.severity}</span> {report.summary}</p>
+    {report.parts.length > 0 && <ul className="agent-parts">{report.parts.map(part => <li key={part.part}>
+      <span>{part.part}</span>
+      <span className={part.in_stock === true ? 'ok' : part.in_stock === false ? 'out' : 'unknown'}>{part.match ? `${part.in_stock === false ? 'Out of stock' : part.in_stock ? `${part.quantity} in stock` : 'In inventory'}${part.location ? ` · ${part.location}` : ''}` : 'Not stocked'}</span>
+    </li>)}</ul>}
+    {report.actions_taken.length > 0 && <p className="agent-actions">✅ {report.actions_taken.join(' · ')}</p>}
+    {report.safety.length > 0 && <details open><summary>Safety</summary><ul>{report.safety.map(item => <li key={item}>{item}</li>)}</ul></details>}
+    {report.next_steps.length > 0 && <details><summary>Next steps</summary><ol>{report.next_steps.map(item => <li key={item}>{item}</li>)}</ol></details>}
+    {report.manual_notes && <details><summary>From the manual</summary><p>{report.manual_notes}</p></details>}
+    <details><summary>How the agent worked ({steps.length} steps{mode === 'guided' ? ', guided' : ''})</summary><ol>{steps.map((step, index) => <li key={index}><strong>{TOOL_LABELS[step.tool] || step.tool}</strong>{step.args?.part_name ? `: ${step.args.part_name}` : ''}<br/><small>{step.result}</small></li>)}</ol></details>
+  </div>;
+}
+
+function AgentPanel() {
+  const [report, setReport] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {getProactiveReport(API_BASE).then(setReport).catch(issue => setError(issue.message));}, []);
+  async function runNow() {
+    setBusy(true); setError('');
+    try {setReport(await runProactiveAgent(API_BASE));} catch (issue) {setError(issue.message);} finally {setBusy(false);}
+  }
+  async function decide(id, status) {
+    try {await setRequisitionStatus(API_BASE, id, status); setReport(await getProactiveReport(API_BASE));} catch (issue) {setError(issue.message);}
+  }
+  if (!report) return error ? <p className="form-error">{error}</p> : null;
+  const drafts = report.requisitions.filter(req => req.status === 'draft');
+  const when = value => value ? new Date(value).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : 'not yet';
+  return <section className="agent-panel panel" aria-labelledby="agent-title">
+    <div className="agent-panel-head"><div><p className="eyebrow">🤖 MAINTENANCE AGENT · RUNS ON ITS OWN</p><h2 id="agent-title">Today's briefing</h2>
+      <p className="agent-meta">Last run {when(report.last_run)} · next {when(report.next_run)} · {report.due_soon.length} due soon · {report.shortages} short on stock</p></div>
+      <button className="button secondary" onClick={runNow} disabled={busy || report.running}>{busy || report.running ? 'Running…' : 'Run now'}</button></div>
+    {report.summary ? <p className="agent-summary">{report.summary}</p> : <p className="form-hint">The agent hasn't run yet.</p>}
+    {report.due_soon.length > 0 && <details><summary>Due within a week or overdue ({report.due_soon.length})</summary><ul>{report.due_soon.slice(0, 15).map(alert => <li key={`${alert.asset_id}-${alert.title}`}><strong>{alert.asset_name}</strong>: {alert.title} · {alert.days_until_due < 0 ? `${-alert.days_until_due} days overdue` : alert.days_until_due === 0 ? 'today' : `in ${alert.days_until_due} days`}</li>)}</ul></details>}
+    {drafts.map(req => <div className="requisition" key={req.id}>
+      <div className="requisition-head"><strong>Purchase requisition draft · {sourceLabel(req.source)} · {req.lines.length} {req.lines.length === 1 ? 'item' : 'items'}</strong>
+        <span><button className="button primary" onClick={() => decide(req.id, 'approved')}>Approve</button><button className="button secondary" onClick={() => decide(req.id, 'dismissed')}>Dismiss</button></span></div>
+      <details><summary>Show items</summary><ul>{req.lines.map(line => <li key={line.asset_id}>{line.quantity} × {line.name}{line.code ? ` (${line.code})` : ''} · {line.reason}{line.purchase_url && <> · <a href={line.purchase_url} target="_blank" rel="noopener noreferrer">buy</a></>}</li>)}</ul></details>
+    </div>)}
+    {report.requisitions.some(req => req.status === 'approved') && <p className="form-hint">{report.requisitions.filter(req => req.status === 'approved').length} requisition(s) approved.</p>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
+function Assistant({equipment, onManualUploaded, onChanged}) {
   const [equipmentId, setEquipmentId] = useState(equipment[0]?.id || '');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
@@ -191,18 +240,27 @@ function Assistant({equipment, onManualUploaded}) {
     }
     setPhoto(null);
   }
-  async function submit(event) {
+  async function submit(event, useAgent = false) {
     event.preventDefault();
-    if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
+    if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId || (useAgent && !photo)) return;
     const active = new AbortController(); controller.current = active;
-    const timeout = setTimeout(() => active.abort(), photo ? 90000 : 30000); // looking at a photo takes the model longer
-    const sentMessage = message.trim() || 'What should I check in this photo?';
+    // The agent makes several model calls in a row; a photo alone takes the model longer than text.
+    const timeout = setTimeout(() => active.abort(), useAgent ? 240000 : photo ? 90000 : 30000);
+    const sentMessage = message.trim() || (useAgent ? 'Diagnose this and tell me what to do.' : 'What should I check in this photo?');
     const sentPhoto = photo;
     setMessages(previous => [...previous, {role: 'user', text: sentMessage, photoUrl: sentPhoto?.url}]);
-    setMessage(''); setPhoto(null); setPending(true); setError('');
+    setMessage(''); setPhoto(null); setPending(useAgent ? 'agent' : 'ask'); setError('');
     try {
-      const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
-      if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
+      if (useAgent) {
+        const result = await runDiagnosticAgent(API_BASE, sentPhoto.file, equipmentId, message.trim(), {signal: active.signal});
+        if (controller.current === active && !active.signal.aborted) {
+          setMessages(previous => [...previous, {role: 'assistant', text: result.report.summary, agent: result}]);
+          if (result.task) await onChanged?.();
+        }
+      } else {
+        const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
+        if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
+      }
     }
     catch (issue) {if (controller.current === active) setError(issue.name === 'AbortError' ? 'The request timed out. Please try again.' : issue.message);}
     finally {clearTimeout(timeout); if (controller.current === active) setPending(false);}
@@ -213,9 +271,9 @@ function Assistant({equipment, onManualUploaded}) {
     <p className="assistant-copy">Share a photo and describe what you notice. Your maintenance assistant can help you find the next step.</p>
     <span className={`connection ${API_BASE ? 'ready' : ''}`}><span/>{API_BASE ? 'Backend configured' : 'AI connection pending'}</span>
     <div className="chat-log" role="log" aria-label="Diagnostic conversation" aria-live="polite">
-      {messages.length ? messages.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}><strong>{entry.role === 'user' ? 'You' : 'Maintenance assistant'}</strong>{entry.photoUrl && <img src={entry.photoUrl} alt="Photo attached to your question"/>}{entry.text && <p>{entry.text}</p>}</div>)
+      {messages.length ? messages.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}><strong>{entry.role === 'user' ? 'You' : 'Maintenance assistant'}</strong>{entry.photoUrl && <img src={entry.photoUrl} alt="Photo attached to your question"/>}{entry.agent ? <AgentResult result={entry.agent}/> : entry.text && <p>{entry.text}</p>}</div>)
         : <p className="chat-empty">Your diagnostic conversation will appear here. A photo is optional.</p>}
-      {pending && <p className="chat-pending">Thinking about your question...</p>}
+      {pending && <p className="chat-pending">{pending === 'agent' ? 'Agent at work: inspecting the photo, checking stock and the manual… (up to a minute)' : 'Thinking about your question...'}</p>}
     </div>
     <form onSubmit={submit}>
       <label>Equipment<select value={equipmentId} onChange={event => setEquipmentId(event.target.value)} disabled={!equipment.length}>{equipment.length ? equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">Add equipment first</option>}</select></label>
@@ -224,10 +282,11 @@ function Assistant({equipment, onManualUploaded}) {
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
-      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      <button type="submit" className="button primary full" disabled={!API_BASE || Boolean(pending) || (!message.trim() && !photo) || !equipmentId}>{pending === 'ask' ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      {photo && <button type="button" className="button secondary full agent-button" disabled={!API_BASE || Boolean(pending) || !equipmentId} onClick={event => submit(event, true)} title="Inspects the photo, checks stock and the manual, and schedules the repair">🤖 {pending === 'agent' ? 'Agent working…' : 'Run diagnostic agent'}</button>}
     </form>
     {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
-    <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
+    <div aria-live="polite" aria-busy={Boolean(pending)}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
   </aside>;
 }
 
@@ -320,6 +379,7 @@ export default function App() {
         {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', icon: 'check', action: () => navigate('History')}
       ].map((stat, index) => <button className={`stat panel stat-${index}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
       <div className="section-toolbar"><div><p className="eyebrow">LESS GUESSWORK. MORE GETTING ON.</p><h2>{view === 'History' ? 'Maintenance history' : view === 'Maintenance' ? 'Your maintenance plan' : 'Your equipment'}</h2></div><label className="search"><Icon name="search" size={17}/><input type="search" aria-label="Search equipment and tasks" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search equipment or tasks"/></label></div>
+      {API_BASE && view === 'Overview' && <AgentPanel/>}
       {(view === 'Overview' || view === 'Equipment') && <section className="equipment-grid" aria-label="Equipment">{visibleEquipment.map((item, index) => {
         const tasks = data.tasks.filter(task => task.equipment_id === item.id && !task.completed_at);
         const needsAttention = tasks.some(task => taskStatus(task, today) === 'overdue');
@@ -338,7 +398,7 @@ export default function App() {
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>
-      </section><Assistant equipment={scoped.equipment} onManualUploaded={refresh}/></div>
+      </section><Assistant equipment={scoped.equipment} onManualUploaded={refresh} onChanged={refresh}/></div>
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>

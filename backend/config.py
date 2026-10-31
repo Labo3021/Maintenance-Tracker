@@ -56,5 +56,11 @@ class Settings:
         self.search_provider = os.getenv("SEARCH_PROVIDER", "none").strip().lower()
         self.brave_api_key = os.getenv("BRAVE_API_KEY", "").strip()
 
+        # Agents. Diagnostic agent: max tool calls per run. Proactive agent: scan every N minutes
+        # (0 = only when triggered), flagging work due within AGENT_DUE_DAYS.
+        self.agent_max_steps = int(os.getenv("AGENT_MAX_STEPS", "7"))
+        self.agent_interval_minutes = int(os.getenv("AGENT_INTERVAL_MINUTES", "360"))
+        self.agent_due_days = int(os.getenv("AGENT_DUE_DAYS", "7"))
+
 
 settings = Settings()

@@ -163,3 +163,40 @@ The user attached a photo of this equipment. Look at it carefully: describe only
 to the question (visible damage, leaks, wear, error codes, labels), then answer. If the photo is
 unclear or doesn't show this equipment, say so.
 """
+
+AGENT_PROMPT = """You are LabGuard AI's diagnostic agent. A user uploaded a photo of equipment that may be
+damaged. Work step by step, calling ONE tool per reply, then write a final report.
+
+{setting}
+
+Equipment selected by the user: {equipment}
+User notes: {notes}
+
+Tools:
+- inspect_image {{}}: look at the uploaded photo (component, issue, severity, parts needed, hazards). Call it first.
+- check_inventory {{"part_name": "..."}}: is this replacement part in stock in our inventory, and where.
+- query_manual {{"question": "..."}}: ask the equipment's linked manual (error codes, specs, safety steps).{manual_note}
+- schedule_task {{"title": "...", "priority": "low|medium|high|critical", "due_in_days": N}}: put the repair on
+  the maintenance schedule. Use it once when the problem needs action.
+
+Good plan: inspect_image -> check_inventory for each needed part -> query_manual if useful -> schedule_task
+-> final.
+
+Respond with ONLY a JSON object, either a tool call:
+{{"thought": "why", "tool": "check_inventory", "args": {{"part_name": "door gasket"}}}}
+or the final report:
+{{"thought": "why", "final": {{"summary": "2-3 sentences for the user", "safety": ["..."],
+  "next_steps": ["..."]}}}}
+
+Steps so far:
+{history}
+"""
+
+PROACTIVE_PROMPT = """You are LabGuard AI's maintenance planner. Write a short briefing (3 to 5 sentences, plain
+text, no lists or Markdown) for the people who look after this equipment. Say what is most urgent first
+(overdue safety or calibration work, items with zero units left), then what can wait. Mention the purchase
+requisition if one was drafted. Be concrete: name the items.
+
+Findings:
+{findings}
+"""

@@ -10,7 +10,9 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 from fastapi.responses import FileResponse
 
+from ai import agent as diagnostic_agent
 from ai import assistant, manual_finder, manuals
+from ai.proactive import agent as proactive_agent
 from ai.diagnose import diagnose_image
 from ai.identify import identify_image
 from config import settings
@@ -22,6 +24,10 @@ from .schemas import (
     Asset,
     AssistantAnswer,
     AssistantQuery,
+    AgentDiagnoseResponse,
+    ProactiveReport,
+    Requisition,
+    RequisitionUpdate,
     AssetManualResult,
     AssetCreate,
     AssetStatus,
@@ -459,3 +465,39 @@ async def ask_assistant(request: Request):
         raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
     asset = _asset_or_404(body.equipment_id)
     return await run_in_threadpool(assistant.answer, asset, body.message, image, mime or "image/jpeg")
+
+
+# --- Agents --------------------------------------------------------------------
+
+
+@router.post("/agents/diagnose", response_model=AgentDiagnoseResponse, tags=["agents"])
+def agent_diagnose(
+    image: UploadFile = File(..., description="Photo of the damaged equipment"),
+    asset_id: Optional[str] = Form(None, description="Equipment it belongs to (enables manual lookup and scheduling)"),
+    notes: Optional[str] = Form(None, description="What the user noticed"),
+):
+    """Diagnostic agent: Gemma calls inspect_image, check_inventory, query_manual and schedule_task as
+    needed, then returns one action report plus every step it took. Takes ~20-60 s with a local model."""
+    data = _read_image(image)
+    asset = _asset_or_404(asset_id) if asset_id else None
+    return diagnostic_agent.run_agent(data, image.content_type, asset=asset, notes=notes)
+
+
+@router.get("/agents/proactive", response_model=ProactiveReport, tags=["agents"])
+def proactive_report():
+    """Latest findings of the background maintenance & reorder agent (due work, shortages, requisitions)."""
+    return proactive_agent.report()
+
+
+@router.post("/agents/proactive/run", response_model=ProactiveReport, tags=["agents"])
+def proactive_run():
+    """Run the background agent now instead of waiting for its next scheduled run."""
+    return proactive_agent.run()
+
+
+@router.patch("/agents/requisitions/{req_id}", response_model=Requisition, tags=["agents"])
+def update_requisition(req_id: str, body: RequisitionUpdate):
+    req = proactive_agent.set_status(req_id, body.status)
+    if req is None:
+        raise HTTPException(404, f"Requisition '{req_id}' not found")
+    return req

@@ -180,3 +180,30 @@ export function addTask(baseUrl, task, options) {
     repeat_every_days: RECURRENCE_DAYS[task.recurrence] ?? null
   }});
 }
+
+// --- Agents ---
+
+// Diagnostic agent: Gemma calls inventory, manual and scheduling tools for a photo, then reports.
+export async function runDiagnosticAgent(baseUrl, image, equipmentId, notes, {signal, request = fetch} = {}) {
+  if (!baseUrl) throw new Error('The backend is not connected yet.');
+  const body = new FormData();
+  body.append('image', image, image.name);
+  if (equipmentId) body.append('asset_id', equipmentId);
+  if (notes) body.append('notes', notes);
+  const response = await request(endpoint(baseUrl, '/agents/diagnose'), {method: 'POST', body, signal});
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `The agent could not finish (${response.status}).`);
+  return result;
+}
+
+export function getProactiveReport(baseUrl, options) {
+  return call(baseUrl, '/agents/proactive', options);
+}
+
+export function runProactiveAgent(baseUrl, options) {
+  return call(baseUrl, '/agents/proactive/run', {...options, method: 'POST', body: {}});
+}
+
+export function setRequisitionStatus(baseUrl, id, status, options) {
+  return call(baseUrl, `/agents/requisitions/${id}`, {...options, method: 'PATCH', body: {status}});
+}

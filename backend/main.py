@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ai import assistant, manuals
+from ai.proactive import agent as proactive_agent
 from api import sources
 from api.routes import router
 from api.store import store
@@ -23,7 +24,9 @@ async def lifespan(app: FastAPI):
     if store.fresh:
         sources.load_private(settings.data_dir / "private")
     threading.Thread(target=assistant.warm_up, daemon=True).start()
+    proactive_agent.start()
     yield
+    proactive_agent.stop()
 
 
 app = FastAPI(

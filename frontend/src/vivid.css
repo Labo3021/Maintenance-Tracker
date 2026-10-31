@@ -271,3 +271,30 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .item-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .item-links a { text-decoration: none; }
 @media (max-width: 720px) { .item-details-body { grid-template-columns: 1fr; } }
+
+/* Agents */
+.agent-button { margin-top: 8px; }
+.agent-result p { margin: 0 0 8px; }
+.agent-result details { margin-top: 6px; font-size: 11px; }
+.agent-result details ul, .agent-result details ol { margin: 4px 0 0; padding-left: 18px; }
+.agent-result small { color: #6b7c8f; }
+.agent-severity { display: inline-block; text-transform: uppercase; font-size: 9px; font-weight: 700; letter-spacing: .05em; padding: 2px 7px; border-radius: 999px; background: #e9f2ff; color: #1769e8; margin-right: 4px; }
+.agent-severity.high, .agent-severity.critical { background: #ffe9e6; color: #c23b22; }
+.agent-severity.medium { background: #fff4dc; color: #9a6400; }
+.agent-parts { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; font-size: 11px; }
+.agent-parts li { display: flex; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 6px; background: #f4f8fd; }
+.agent-parts .ok { color: #2e7d4f; font-weight: 600; }
+.agent-parts .out { color: #c23b22; font-weight: 600; }
+.agent-parts .unknown { color: #6b7c8f; }
+.agent-actions { font-size: 11px; color: #2e7d4f; }
+.agent-panel { padding: 18px 22px; margin: 0 0 22px; border: 1px solid #cfe0f7; }
+.agent-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.agent-panel-head h2 { margin: 4px 0 2px; font-size: 19px; }
+.agent-meta { margin: 0; font-size: 11px; color: #6b7c8f; }
+.agent-summary { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #1769e8; background: #f4f8fd; border-radius: 6px; font-size: 13px; line-height: 1.6; }
+.agent-panel details { font-size: 12px; margin-top: 6px; }
+.agent-panel details ul { max-height: 220px; overflow: auto; padding-left: 18px; }
+.requisition { margin-top: 12px; padding: 10px 12px; border: 1px dashed #cbdcf5; border-radius: 9px; background: #fbfdff; }
+.requisition-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.requisition-head span { display: flex; gap: 8px; }
+.requisition-head .button { padding: 6px 12px; font-size: 11px; }
