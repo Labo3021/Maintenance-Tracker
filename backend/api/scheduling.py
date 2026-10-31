@@ -70,7 +70,10 @@ def sync_tasks(asset: Asset) -> None:
                 )
             )
         else:
-            task.title, task.description, task.due_date, task.priority = title, description, due, priority
+            # Replace rather than mutate: the old task object may be shared with a snapshot.
+            updated = task.model_copy(update={"title": title, "description": description, "due_date": due,
+                                              "priority": priority})
+            asset.tasks = [updated if t is task else t for t in asset.tasks]
 
 
 def record_completion(asset: Asset, schedule_id: Optional[str], done_on: date) -> Asset:

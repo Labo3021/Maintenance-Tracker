@@ -64,7 +64,9 @@ class InventoryStore:
     def __init__(self, path: Path, seed_paths: list[Path]) -> None:
         self.path = path
         self.seed_paths = seed_paths
-        self._lock = threading.Lock()
+        # Writers never mutate a stored Asset in place: they build a new one and swap it in,
+        # so a reader holding a snapshot (or a response being serialized) never sees a half-done change.
+        self._lock = threading.RLock()
         self._assets: dict[str, Asset] = {}
         self._load()
 
@@ -93,8 +95,12 @@ class InventoryStore:
 
     # --- assets ---
 
+    def _snapshot(self) -> list[Asset]:
+        with self._lock:
+            return list(self._assets.values())
+
     def list_assets(self, category: Optional[str] = None, status: Optional[str] = None) -> list[Asset]:
-        assets = list(self._assets.values())
+        assets = self._snapshot()
         if category:
             assets = [a for a in assets if a.category.lower() == category.lower()]
         if status:
@@ -199,7 +205,7 @@ class InventoryStore:
             if asset is None:
                 return None
             task = MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), source=source, **data.model_dump())
-            asset.tasks.append(task)
+            self._assets[asset_id] = asset.model_copy(update={"tasks": [*asset.tasks, task]})
             self._save()
             return task
 
@@ -219,16 +225,17 @@ class InventoryStore:
             asset = self._assets.get(asset_id)
             if asset is None:
                 return None
-            for i, task in enumerate(asset.tasks):
+            for task in asset.tasks:
                 if task.id == task_id:
                     updated = task.model_copy(update=changes)
-                    asset.tasks[i] = updated
+                    tasks = [updated if t.id == task_id else t for t in asset.tasks]
+                    self._assets[asset_id] = asset.model_copy(update={"tasks": tasks})
                     self._save()
                     return updated
             return None
 
     def find_task(self, task_id: str) -> Optional[tuple[Asset, MaintenanceTask]]:
-        for asset in self._assets.values():
+        for asset in self._snapshot():
             for task in asset.tasks:
                 if task.id == task_id:
                     return asset, task
@@ -244,7 +251,7 @@ class InventoryStore:
         """All tasks across assets, soonest first. within_days always includes overdue tasks."""
         today = date.today()
         out = []
-        for asset in self._assets.values():
+        for asset in self._snapshot():
             if asset_id and asset.id != asset_id:
                 continue
             if environment and asset.environment != environment:
@@ -277,9 +284,11 @@ class InventoryStore:
             asset, task = found
             done_on = completed_on or date.today()
             done = task.model_copy(update={"status": "done", "completed_on": done_on, "notes": notes or task.notes})
-            asset.tasks = [done if t.id == task_id else t for t in asset.tasks]
+            asset = asset.model_copy(update={"tasks": [done if t.id == task_id else t for t in asset.tasks]})
             if task.status == "open" and task.schedule_id:
                 asset = self._put(record_completion(asset, task.schedule_id, done_on))
+            else:
+                self._assets[asset.id] = asset
             self._save()
             nxt = None
             if task.schedule_id:
@@ -294,7 +303,9 @@ class InventoryStore:
             asset, task = found
             new_due = max(task.due_date, date.today()) + timedelta(days=days)
             snoozed = task.model_copy(update={"due_date": new_due, "snoozed_until": new_due})
-            asset.tasks = [snoozed if t.id == task_id else t for t in asset.tasks]
+            self._assets[asset.id] = asset.model_copy(
+                update={"tasks": [snoozed if t.id == task_id else t for t in asset.tasks]}
+            )
             self._save()
             return snoozed
 

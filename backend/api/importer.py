@@ -180,7 +180,11 @@ def _read_csv(data: bytes) -> list[list[Any]]:
         dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
     except csv.Error:
         dialect = csv.excel
-    return [row for row in csv.reader(io.StringIO(text), dialect)]
+    try:
+        # newline="" lets the csv module handle line breaks inside quoted cells itself.
+        return [row for row in csv.reader(io.StringIO(text, newline=""), dialect)]
+    except csv.Error as e:
+        raise ImportFileError(f"Couldn't read this CSV file: {e}") from e
 
 
 def _read_xlsx(data: bytes, sheet: Optional[str]) -> tuple[list[list[Any]], str]:
