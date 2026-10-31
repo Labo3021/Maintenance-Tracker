@@ -1,0 +1,515 @@
+{
+  "assets": [
+    {
+      "id": "asset-202",
+      "name": "Smoke Detector Battery",
+      "category": "safety",
+      "manufacturer": "Energizer",
+      "model": "MAX 9V E522",
+      "location": "Master Bedroom Ceiling",
+      "status": "operational",
+      "last_service_date": "2026-01-10",
+      "service_interval_days": 365,
+      "parts": [
+        {
+          "name": "Energizer MAX 9V E522",
+          "installed_date": "2026-01-10"
+        }
+      ],
+      "tasks": [],
+      "severity": "high",
+      "difficulty": "easy",
+      "estimated_minutes": 2,
+      "tools_needed": [
+        "Step Ladder"
+      ],
+      "repair_steps": [
+        "Twist the detector unit counter-clockwise to remove it from the ceiling mount.",
+        "Open the battery compartment on the back of the unit.",
+        "Remove the old 9V battery and insert the new one, ensuring correct polarity.",
+        "Press and hold the 'Test' button for 5 seconds to confirm functionality.",
+        "Twist the unit back into the ceiling mount."
+      ],
+      "notes": "Test alarms monthly and replace the whole alarm every 10 years. Check all other detectors in the house while the ladder is out.",
+      "video_url": "https://www.youtube.com/watch?v=GYqpSQ2_jss",
+      "purchase_url": "https://www.amazon.com/dp/B00J7L34M4",
+      "image_url": "/demo_assets/parts/task_202.jpg"
+    },
+    {
+      "id": "asset-303",
+      "name": "Dishwasher Filter",
+      "category": "appliances",
+      "manufacturer": "Bosch",
+      "model": "00645038 Micro Filter",
+      "location": "Kitchen",
+      "status": "operational",
+      "last_service_date": "2026-08-15",
+      "service_interval_days": 90,
+      "parts": [
+        {
+          "name": "Bosch 00645038 Micro Filter",
+          "installed_date": "2026-08-15"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "easy",
+      "estimated_minutes": 10,
+      "tools_needed": [],
+      "repair_steps": [
+        "Pull out the bottom dish rack completely.",
+        "Rotate the cylindrical filter lock to the 'Unlock' position.",
+        "Lift the filter assembly out of the dishwasher floor.",
+        "Clean the filter under running water with soap and a soft brush to remove debris.",
+        "Reinsert the filter and twist to lock it back into place."
+      ],
+      "notes": "Clean more frequently if running heavy-duty cycles with high food residue.",
+      "video_url": "https://www.youtube.com/watch?v=kxRDs3GrdEk",
+      "purchase_url": "https://www.bosch-home.com/us/en/product/dishwashers/accessories/filters/00645038",
+      "image_url": "/demo_assets/parts/task_303.jpg"
+    },
+    {
+      "id": "asset-401",
+      "name": "Refrigerator Water Filter",
+      "category": "appliances",
+      "manufacturer": "Samsung",
+      "model": "DA29-00020B",
+      "location": "Kitchen Refrigerator",
+      "status": "operational",
+      "last_service_date": "2026-09-01",
+      "service_interval_days": 180,
+      "parts": [
+        {
+          "name": "Samsung DA29-00020B",
+          "installed_date": "2026-09-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "low",
+      "difficulty": "easy",
+      "estimated_minutes": 5,
+      "tools_needed": [],
+      "repair_steps": [
+        "Turn off the water supply to the refrigerator.",
+        "Open the filter cover (its location varies by model; check the user manual).",
+        "Rotate the old filter counter-clockwise to unlock and remove it.",
+        "Remove the protective cap from the new filter and insert it.",
+        "Twist the new filter clockwise until it locks, aligning the lock symbol with the indicator line.",
+        "Turn the water supply back on."
+      ],
+      "notes": "Dispense water after replacement to clear air from the line. Replace sooner if dispensing slows.",
+      "video_url": "https://www.youtube.com/watch?v=rOwUSDa4PHo",
+      "purchase_url": "https://www.amazon.com/dp/B003N1ZSYG",
+      "image_url": "/demo_assets/parts/task_401.jpg"
+    },
+    {
+      "id": "asset-402",
+      "name": "Dryer Vent Cleaning",
+      "category": "appliances",
+      "manufacturer": "Holikme",
+      "model": "30Ft Dryer Vent Cleaner Kit",
+      "location": "Laundry Room / Exterior Wall",
+      "status": "operational",
+      "last_service_date": "2026-05-10",
+      "service_interval_days": 365,
+      "parts": [
+        {
+          "name": "Holikme 30Ft Dryer Vent Cleaner Kit",
+          "installed_date": "2026-05-10"
+        }
+      ],
+      "tasks": [],
+      "severity": "high",
+      "difficulty": "medium",
+      "estimated_minutes": 45,
+      "tools_needed": [
+        "Vacuum",
+        "Dryer Vent Brush Kit",
+        "Screwdriver"
+      ],
+      "repair_steps": [
+        "Unplug the dryer, then disconnect the flexible duct from the back of the dryer.",
+        "Insert the vent brush into the duct and run it through to the exterior exit.",
+        "Vacuum out the lint collected at the dryer end.",
+        "Clear any debris from the exterior vent flap.",
+        "Reconnect the duct and plug the dryer back in."
+      ],
+      "notes": "Crucial for fire prevention; clean sooner if clothes take longer than usual to dry, and check for kinks in the hose.",
+      "video_url": "https://www.youtube.com/watch?v=tcSYoBnK6No",
+      "purchase_url": "https://www.amazon.com/dp/B07SQYX2FH",
+      "image_url": "/demo_assets/parts/task_402.jpg"
+    },
+    {
+      "id": "asset-403",
+      "name": "Sump Pump Test",
+      "category": "plumbing",
+      "manufacturer": "Zoeller",
+      "model": "M53",
+      "location": "Basement Sump Pit",
+      "status": "operational",
+      "last_service_date": "2025-12-01",
+      "service_interval_days": 90,
+      "parts": [
+        {
+          "name": "Zoeller M53",
+          "installed_date": "2025-12-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "high",
+      "difficulty": "easy",
+      "estimated_minutes": 10,
+      "tools_needed": [
+        "Bucket of water"
+      ],
+      "repair_steps": [
+        "Slowly pour water into the sump pit until the float switch is triggered.",
+        "Ensure the pump activates immediately and evacuates the water.",
+        "Check the discharge pipe outside to ensure water is flowing away from the foundation."
+      ],
+      "notes": "Test each season, including before the spring rainy season.",
+      "video_url": "https://www.youtube.com/watch?v=rWj7J3SdsiM",
+      "purchase_url": "https://www.amazon.com/dp/B000H5PYR2",
+      "image_url": "/demo_assets/parts/task_403.jpg"
+    },
+    {
+      "id": "asset-404",
+      "name": "Water Softener Salt",
+      "category": "plumbing",
+      "manufacturer": "Morton",
+      "model": "Clean and Protect Pellets",
+      "location": "Garage",
+      "status": "operational",
+      "last_service_date": "2026-10-01",
+      "service_interval_days": 60,
+      "parts": [
+        {
+          "name": "Morton Clean and Protect Pellets",
+          "installed_date": "2026-10-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "easy",
+      "estimated_minutes": 15,
+      "tools_needed": [],
+      "repair_steps": [
+        "Lift the lid of the brine tank.",
+        "Check the salt level; refill if the tank is less than half full.",
+        "Pour in the salt pellets; the average household uses about two bags every two months.",
+        "Close and secure the lid."
+      ],
+      "notes": "Use water softener salt rather than rock salt, which leaves insoluble residue in the brine tank.",
+      "video_url": "https://www.youtube.com/watch?v=iVE7bRM-TyQ",
+      "purchase_url": "https://www.amazon.com/dp/B0CF2TGP56",
+      "image_url": "/demo_assets/parts/task_404.jpg"
+    },
+    {
+      "id": "asset-405",
+      "name": "HVAC Condenser Coil Cleaning",
+      "category": "hvac",
+      "manufacturer": "Goodman",
+      "model": "GSX140361",
+      "location": "Outdoor Unit",
+      "status": "operational",
+      "last_service_date": "2026-04-15",
+      "service_interval_days": 180,
+      "parts": [
+        {
+          "name": "Goodman GSX140361",
+          "installed_date": "2026-04-15"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "medium",
+      "estimated_minutes": 30,
+      "tools_needed": [
+        "Garden Hose",
+        "Soft Brush"
+      ],
+      "repair_steps": [
+        "Turn off the power to the AC unit at the outdoor disconnect box.",
+        "Remove any leaves or debris from around the unit.",
+        "Use a soft brush to gently remove dust from the fins.",
+        "Spray the coils with a garden hose (low pressure) from the inside out."
+      ],
+      "notes": "Do not use a pressure washer as it will bend the aluminum fins.",
+      "video_url": "https://www.youtube.com/watch?v=pzDNFuiAESE",
+      "purchase_url": "https://www.amazon.com/dp/B0FCRR5BPM",
+      "image_url": "/demo_assets/parts/task_405.jpg"
+    },
+    {
+      "id": "asset-406",
+      "name": "Fire Extinguisher Inspection",
+      "category": "safety",
+      "manufacturer": "Kidde",
+      "model": "Pro 210",
+      "location": "Kitchen / Garage",
+      "status": "operational",
+      "last_service_date": "2026-01-01",
+      "service_interval_days": 30,
+      "parts": [
+        {
+          "name": "Kidde Pro 210",
+          "installed_date": "2026-01-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "high",
+      "difficulty": "easy",
+      "estimated_minutes": 5,
+      "tools_needed": [],
+      "repair_steps": [
+        "Check the pressure gauge to ensure the needle is in the green zone.",
+        "Verify the safety pin is intact and the seal is not broken.",
+        "Look for leaks, dents, or corrosion on the canister.",
+        "Check the expiration date on the label."
+      ],
+      "notes": "If the gauge is outside the green zone, have the unit serviced or replaced. Your local fire department can advise where.",
+      "video_url": "https://www.youtube.com/watch?v=cnM8qO9naM4",
+      "purchase_url": "https://www.amazon.com/dp/B0F4DZ7FM9",
+      "image_url": "/demo_assets/parts/task_406.jpg"
+    },
+    {
+      "id": "asset-407",
+      "name": "Gutter Cleaning",
+      "category": "exterior",
+      "manufacturer": "Amerimax",
+      "model": "2600600120 K-Style Gutter",
+      "location": "Roof Perimeter",
+      "status": "operational",
+      "last_service_date": "2026-11-01",
+      "service_interval_days": 180,
+      "parts": [
+        {
+          "name": "Amerimax 2600600120 K-Style Gutter",
+          "installed_date": "2026-11-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "hard",
+      "estimated_minutes": 120,
+      "tools_needed": [
+        "Extension Ladder",
+        "Gutter Scoop",
+        "Garden Hose"
+      ],
+      "repair_steps": [
+        "Set up the ladder on stable ground.",
+        "Scoop out organic debris and leaves from the gutters.",
+        "Flush the gutters with a hose to ensure downspouts are clear.",
+        "Inspect for leaks or sagging sections."
+      ],
+      "notes": "Safety first: Always have a spotter when using extension ladders.",
+      "video_url": "https://www.youtube.com/watch?v=IX-pv3cH6Y4",
+      "purchase_url": "https://www.amazon.com/dp/B0F1ZBTQPT",
+      "image_url": "/demo_assets/parts/task_407.jpg"
+    },
+    {
+      "id": "asset-408",
+      "name": "Toilet Flapper Replacement",
+      "category": "plumbing",
+      "manufacturer": "Korky",
+      "model": "100DP Ultra Universal Flapper",
+      "location": "Guest Bathroom",
+      "status": "operational",
+      "last_service_date": "2026-07-20",
+      "service_interval_days": 1825,
+      "parts": [
+        {
+          "name": "Korky 100DP Ultra Universal Flapper",
+          "installed_date": "2026-07-20"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "easy",
+      "estimated_minutes": 15,
+      "tools_needed": [],
+      "repair_steps": [
+        "Shut off the water supply valve behind the toilet.",
+        "Flush the toilet to empty the tank.",
+        "Unhook the flapper chain from the flush lever.",
+        "Unhook both flapper ears from the arms on the flush valve.",
+        "Clean any sediment or debris from the flush valve opening.",
+        "Hook the new flapper's ears onto the arms and attach the chain, leaving one to two links of slack.",
+        "Turn the water supply back on."
+      ],
+      "notes": "Prevents 'phantom flushing' and saves water. Check for silent leaks yearly: add food coloring to the tank, wait 10 minutes, and look for color in the bowl.",
+      "video_url": "https://www.youtube.com/watch?v=SGdDLHbP-l0",
+      "purchase_url": "https://www.amazon.com/dp/B09QLK5WFF",
+      "image_url": "/demo_assets/parts/task_408.jpg"
+    },
+    {
+      "id": "asset-409",
+      "name": "Vacuum Filter Wash",
+      "category": "appliances",
+      "manufacturer": "Dyson",
+      "model": "970013-02 V11 Filter",
+      "location": "Utility Closet",
+      "status": "operational",
+      "last_service_date": "2026-10-15",
+      "service_interval_days": 30,
+      "parts": [
+        {
+          "name": "Dyson 970013-02 V11 Filter",
+          "installed_date": "2026-10-15"
+        }
+      ],
+      "tasks": [],
+      "severity": "low",
+      "difficulty": "easy",
+      "estimated_minutes": 10,
+      "tools_needed": [],
+      "repair_steps": [
+        "Remove the filter from the vacuum assembly.",
+        "Rinse under cold water until the water runs clear.",
+        "Tap the filter gently to remove excess water.",
+        "Allow to air dry for at least 24 hours, until completely dry, before reinstalling."
+      ],
+      "notes": "Do not use detergent or put the filter in a dishwasher or washing machine.",
+      "video_url": "https://www.youtube.com/watch?v=g3t8XUvufQU",
+      "purchase_url": "https://www.dyson.com/support/journey/spare-details.970013-02",
+      "image_url": "/demo_assets/parts/task_409.jpg"
+    },
+    {
+      "id": "asset-410",
+      "name": "Smart Lock Battery Change",
+      "category": "safety",
+      "manufacturer": "August",
+      "model": "Wi-Fi Smart Lock ASL-05",
+      "location": "Front Door",
+      "status": "operational",
+      "last_service_date": "2026-03-12",
+      "service_interval_days": 365,
+      "parts": [
+        {
+          "name": "August Wi-Fi Smart Lock ASL-05",
+          "installed_date": "2026-03-12"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "easy",
+      "estimated_minutes": 5,
+      "tools_needed": [],
+      "repair_steps": [
+        "Remove the battery cover from the interior side of the lock.",
+        "Remove the two old CR123A batteries.",
+        "Insert two new CR123A lithium batteries, ensuring correct polarity.",
+        "Replace the cover and test the lock via the app."
+      ],
+      "notes": "Change batteries immediately when the app warns 'Low Battery'. Operate the lock three times from the app afterward to clear the alert.",
+      "video_url": "https://www.youtube.com/watch?v=if8kJBpnhnQ",
+      "purchase_url": "https://www.amazon.com/dp/B07WTQHK27",
+      "image_url": "/demo_assets/parts/task_410.jpg"
+    },
+    {
+      "id": "asset-411",
+      "name": "Refrigerator Coil Dusting",
+      "category": "appliances",
+      "manufacturer": "Samsung",
+      "model": "RF4267HARS",
+      "location": "Kitchen",
+      "status": "operational",
+      "last_service_date": "2026-08-01",
+      "service_interval_days": 180,
+      "parts": [
+        {
+          "name": "Samsung RF4267HARS",
+          "installed_date": "2026-08-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "medium",
+      "estimated_minutes": 20,
+      "tools_needed": [
+        "Vacuum with Crevice Tool",
+        "Coil Brush"
+      ],
+      "repair_steps": [
+        "Pull the refrigerator away from the wall.",
+        "Unplug the unit from the power outlet.",
+        "Vacuum the dust and pet hair from the condenser coils at the back/bottom.",
+        "Push the refrigerator back into place and plug it in."
+      ],
+      "notes": "Dusty coils force the compressor to work harder, increasing electricity bills.",
+      "video_url": "https://www.youtube.com/watch?v=2aLs7X_hMxU",
+      "purchase_url": "https://www.amazon.com/dp/B0FHQ4PYTQ",
+      "image_url": "/demo_assets/parts/task_411.jpg"
+    },
+    {
+      "id": "asset-412",
+      "name": "Door Hinge Lubrication",
+      "category": "general",
+      "manufacturer": "WD-40",
+      "model": "Specialist Silicone",
+      "location": "All Interior Doors",
+      "status": "operational",
+      "last_service_date": "2026-06-01",
+      "service_interval_days": 730,
+      "parts": [
+        {
+          "name": "WD-40 Specialist Silicone",
+          "installed_date": "2026-06-01"
+        }
+      ],
+      "tasks": [],
+      "severity": "low",
+      "difficulty": "easy",
+      "estimated_minutes": 15,
+      "tools_needed": [
+        "Paper Towels"
+      ],
+      "repair_steps": [
+        "Apply a small amount of silicone lubricant to the hinge pin.",
+        "Open and close the door several times to distribute the oil.",
+        "Wipe away any excess lubricant with a paper towel to prevent staining."
+      ],
+      "notes": "Use silicone spray rather than standard WD-40 for longer-lasting results.",
+      "video_url": "https://www.youtube.com/watch?v=WIqFD1b9NgI",
+      "purchase_url": "https://www.amazon.com/dp/B0GV1JD4J1",
+      "image_url": "/demo_assets/parts/task_412.jpg"
+    },
+    {
+      "id": "asset-413",
+      "name": "Water Heater Flush",
+      "category": "plumbing",
+      "manufacturer": "Rheem",
+      "model": "XE50T06ST45U1",
+      "location": "Garage / Utility Room",
+      "status": "operational",
+      "last_service_date": "2025-11-15",
+      "service_interval_days": 365,
+      "parts": [
+        {
+          "name": "Rheem XE50T06ST45U1",
+          "installed_date": "2025-11-15"
+        }
+      ],
+      "tasks": [],
+      "severity": "medium",
+      "difficulty": "hard",
+      "estimated_minutes": 60,
+      "tools_needed": [
+        "Garden Hose",
+        "Bucket"
+      ],
+      "repair_steps": [
+        "Turn off the electricity and the cold water inlet.",
+        "Connect a garden hose to the drain valve and lead it somewhere hot water won't cause damage.",
+        "Open the pressure relief valve, then open the drain valve and drain the tank completely.",
+        "Close the drain valve, disconnect the hose, and close the pressure relief valve.",
+        "Turn on all hot water faucets and open the cold water inlet to refill the tank.",
+        "Once water flows from each faucet, turn it off, then turn the electricity back on."
+      ],
+      "notes": "Removes sediment buildup to improve heating efficiency. Flush every 6 months if you have hard water.",
+      "video_url": "https://www.youtube.com/watch?v=v7xtmjNCBmY",
+      "purchase_url": "https://www.amazon.com/dp/B0CNN19BTM",
+      "image_url": "/demo_assets/parts/task_413.jpg"
+    }
+  ]
+}

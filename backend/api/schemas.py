@@ -6,15 +6,19 @@ shown at http://localhost:8000/docs.
 
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from urllib.parse import quote_plus
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, StringConstraints, computed_field
 
 Severity = Literal["low", "medium", "high", "critical"]
 AssetStatus = Literal["operational", "needs_attention", "out_of_service"]
 TaskStatus = Literal["open", "done"]
 ResultSource = Literal["model", "mock", "fallback"]
+# Length limits keep one bad request or import row from bloating the data file.
+ShortText = Annotated[str, StringConstraints(max_length=200)]
+LongText = Annotated[str, StringConstraints(max_length=5000)]
+UrlText = Annotated[str, StringConstraints(max_length=2000)]
 Environment = Literal["lab", "household", "enterprise"]
 ScheduleKind = Literal["inspect", "clean", "replace", "service", "calibrate"]
 TaskKind = Literal["service", "calibration", "part", "schedule", "stock", "task"]
@@ -69,12 +73,12 @@ class MaintenanceSchedule(BaseModel):
     """A recurring job, e.g. "Replace water filter" every 180 days. Keeps one open task alive."""
 
     id: str = Field(default_factory=lambda: f"sch-{uuid.uuid4().hex[:8]}")
-    title: str
+    title: ShortText
     kind: ScheduleKind = "inspect"
     interval_days: int = Field(ge=1)
     last_done: Optional[date] = Field(default=None, description="Unknown = first task is due today")
     priority: Severity = "medium"
-    notes: str = ""
+    notes: LongText = ""
 
     @computed_field
     @property
@@ -101,13 +105,16 @@ class MaintenanceTask(BaseModel):
 
 
 class AssetBase(BaseModel):
-    name: str
-    code: Optional[str] = Field(default=None, description="Inventory code / SKU / catalog number / asset tag")
-    category: str = Field(default="general", description="e.g. centrifuge, autoclave, hplc, kit")
-    manufacturer: Optional[str] = None
-    model: Optional[str] = None
-    serial_number: Optional[str] = None
-    location: Optional[str] = None
+    name: ShortText
+    source: Optional[ShortText] = Field(
+        default=None, description="Which inventory/dataset it came from, e.g. home, uda, lab-demo; used for filtering"
+    )
+    code: Optional[ShortText] = Field(default=None, description="Inventory code / SKU / catalog number / asset tag")
+    category: ShortText = Field(default="general", description="e.g. centrifuge, autoclave, hplc, kit")
+    manufacturer: Optional[ShortText] = None
+    model: Optional[ShortText] = None
+    serial_number: Optional[ShortText] = None
+    location: Optional[ShortText] = None
     status: AssetStatus = "operational"
     last_service_date: Optional[date] = None
     service_interval_days: Optional[int] = Field(default=None, ge=1)
@@ -118,11 +125,23 @@ class AssetBase(BaseModel):
     schedules: list[MaintenanceSchedule] = []
     manual_url: Optional[str] = Field(default=None, description="Link to the equipment manual")
     manual_id: Optional[str] = Field(default=None, description="Loaded manual, usable with /api/manual-query")
+    manual_name: Optional[ShortText] = Field(default=None, description="File name of the linked manual, for display")
     quantity_expected: Optional[int] = Field(default=None, ge=0, description="Units there should be")
     quantity_actual: Optional[int] = Field(default=None, ge=0, description="Units last counted")
-    groups: list[str] = Field(default=[], description="Kits, sets or groups this item belongs to")
-    notes: str = ""
+    groups: list[ShortText] = Field(default=[], description="Kits, sets or groups this item belongs to")
+    notes: LongText = ""
     photo: Optional[str] = Field(default=None, description="Stored photo file name; fetch via photo_url")
+    # How-to details (from data/items.json): shown in the UI and given to the assistant.
+    severity: Optional[Severity] = Field(default=None, description="How much skipping its maintenance matters")
+    difficulty: Optional[ShortText] = Field(default=None, description="e.g. easy, medium, hard")
+    estimated_minutes: Optional[int] = Field(default=None, ge=1)
+    tools_needed: list[ShortText] = []
+    repair_steps: list[LongText] = []
+    video_url: Optional[UrlText] = None
+    purchase_url: Optional[UrlText] = None
+    image_url: Optional[UrlText] = Field(
+        default=None, description="Stock image path on this server, e.g. /demo_assets/parts/task_202.jpg"
+    )
 
 
 class AssetCreate(AssetBase):
@@ -132,12 +151,12 @@ class AssetCreate(AssetBase):
 class AssetUpdate(BaseModel):
     """Partial update: only the fields sent are changed."""
 
-    name: Optional[str] = None
-    category: Optional[str] = None
-    manufacturer: Optional[str] = None
-    model: Optional[str] = None
-    serial_number: Optional[str] = None
-    location: Optional[str] = None
+    name: Optional[ShortText] = None
+    category: Optional[ShortText] = None
+    manufacturer: Optional[ShortText] = None
+    model: Optional[ShortText] = None
+    serial_number: Optional[ShortText] = None
+    location: Optional[ShortText] = None
     status: Optional[AssetStatus] = None
     last_service_date: Optional[date] = None
     service_interval_days: Optional[int] = Field(default=None, ge=1)
@@ -148,11 +167,21 @@ class AssetUpdate(BaseModel):
     schedules: Optional[list[MaintenanceSchedule]] = None
     manual_url: Optional[str] = None
     manual_id: Optional[str] = None
-    code: Optional[str] = None
+    manual_name: Optional[ShortText] = None
+    code: Optional[ShortText] = None
+    source: Optional[ShortText] = None
     quantity_expected: Optional[int] = Field(default=None, ge=0)
     quantity_actual: Optional[int] = Field(default=None, ge=0)
-    groups: Optional[list[str]] = None
-    notes: Optional[str] = None
+    groups: Optional[list[ShortText]] = None
+    notes: Optional[LongText] = None
+    severity: Optional[Severity] = None
+    difficulty: Optional[ShortText] = None
+    estimated_minutes: Optional[int] = Field(default=None, ge=1)
+    tools_needed: Optional[list[ShortText]] = None
+    repair_steps: Optional[list[LongText]] = None
+    video_url: Optional[UrlText] = None
+    purchase_url: Optional[UrlText] = None
+    image_url: Optional[UrlText] = None
 
 
 class Asset(AssetBase):
@@ -184,7 +213,8 @@ class Asset(AssetBase):
     @computed_field
     @property
     def photo_url(self) -> Optional[str]:
-        return f"/api/assets/{self.id}/photo" if self.photo else None
+        """An uploaded photo wins; otherwise the stock image, if any."""
+        return f"/api/assets/{self.id}/photo" if self.photo else self.image_url
 
     @computed_field
     @property
@@ -197,10 +227,14 @@ class Asset(AssetBase):
 
 
 class TaskCreate(BaseModel):
-    title: str
-    description: str = ""
+    title: ShortText
+    description: LongText = ""
     due_date: date
     priority: Severity = "medium"
+    repeat_every_days: Optional[int] = Field(
+        default=None, ge=1, le=3650,
+        description="Make it recurring: first due on due_date, then every N days after each completion",
+    )
 
 
 class TaskUpdate(BaseModel):
@@ -303,11 +337,12 @@ class TaskView(MaintenanceTask):
     asset_name: str
     kind: TaskKind
     days_until_due: int = Field(description="Negative means overdue")
+    interval_days: Optional[int] = Field(default=None, description="Repeat interval for recurring tasks")
 
 
 class TaskComplete(BaseModel):
     completed_on: Optional[date] = Field(default=None, description="Defaults to today")
-    notes: str = ""
+    notes: LongText = ""
 
 
 class TaskSnooze(BaseModel):
@@ -409,3 +444,8 @@ class AssistantAnswer(BaseModel):
     source: ResultSource
     pages_cited: list[int] = []
     used_manual: Optional[str] = Field(default=None, description="Manual file the answer came from, if any")
+
+
+class AssetManualResult(BaseModel):
+    asset: Asset
+    manual: ManualInfo = Field(description="truncated=true means only the first part fits the model's context")

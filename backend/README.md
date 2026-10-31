@@ -120,6 +120,16 @@ Manual and diagnosis tasks are one-off.
   from a calendar app on the same network. Google Calendar's "subscribe by URL" needs a
   public URL, so localhost won't work there.
 
+## Household, lab and workplace settings
+
+Diagnosis and the assistant adapt their language and safety advice to the asset's `environment`
+(`household`, `lab` or `enterprise`); the guidance lives in `SETTING_GUIDANCE` in `ai/prompts.py`.
+Households get plain words, common tools and a clear line on what needs a professional (gas,
+refrigerant, internal wiring, microwave internals); labs get decontamination, PPE, lockout/tagout
+and logging. With no asset (or an everyday item still on the default `lab`), Gemma infers the
+setting from the photo and equipment. New assets default to `lab`, so set `environment` when
+adding household items.
+
 ## Adding equipment from a photo
 
 1. `POST /api/assets/identify` with the photo. Gemma names the item (fridge, vacuum,

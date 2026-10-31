@@ -233,3 +233,41 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .equipment-grid { grid-template-columns: 1fr; }
   .assistant { padding: 20px; }
 }
+
+/* Inventory import, source filter and task thumbnails */
+.header-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.source-filter { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 22px; }
+.source-filter button { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border: 1px solid #dbe5f1; border-radius: 999px; background: #fff; color: #4f6275; font-size: 12px; cursor: pointer; }
+.source-filter button span { font-size: 10px; color: #8a9aab; background: #f1f5fa; border-radius: 999px; padding: 1px 7px; }
+.source-filter button:hover { border-color: #b9cfe9; }
+.source-filter button.active { background: #e9f2ff; border-color: #1769e8; color: #1769e8; font-weight: 600; }
+.source-filter button.active span { background: #1769e8; color: #fff; }
+.task-thumb { width: 42px; height: 42px; flex: none; object-fit: contain; border-radius: 8px; background: #fff; border: 1px solid #e6edf5; padding: 2px; }
+.import-preview { margin: 12px 0; padding: 12px 14px; border-radius: 10px; background: #f4f8fd; border: 1px solid #dbe5f1; font-size: 12px; }
+.import-preview p { margin: 0 0 8px; }
+.import-columns { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 180px; overflow: auto; }
+.import-columns li { display: flex; justify-content: space-between; gap: 12px; }
+.import-columns li span:last-child { color: #1769e8; }
+.import-preview details { margin-top: 8px; }
+.import-preview details ul { max-height: 140px; overflow: auto; padding-left: 18px; }
+@media (max-width: 640px) { .header-actions { width: 100%; justify-content: stretch; } .header-actions .button { flex: 1; } }
+.manual-row { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 10px; border: 1px dashed #cbdcf5; border-radius: 9px; background: #f7faff; color: #4f6275; font-size: 11px; }
+.manual-row .manual-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manual-row .photo-button { flex: none; }
+
+/* Item details (how-to info for the selected equipment) */
+.item-details { padding: 20px 22px; margin: 0 0 22px; }
+.item-details-head { display: flex; align-items: flex-start; gap: 16px; }
+.item-details-head img { width: 84px; height: 84px; flex: none; object-fit: contain; border-radius: 12px; background: #fff; border: 1px solid #e6edf5; padding: 4px; }
+.item-details-head > div { flex: 1; min-width: 0; }
+.item-details-head h2 { margin: 4px 0 2px; font-size: 20px; }
+.item-details-head p { margin: 0; color: #6b7c8f; font-size: 12px; }
+.item-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.item-facts span { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: #e9f2ff; color: #1769e8; }
+.item-notes { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid #1769e8; background: #f4f8fd; border-radius: 6px; font-size: 13px; line-height: 1.6; }
+.item-details-body { display: grid; grid-template-columns: minmax(140px, 1fr) 3fr; gap: 18px; margin-top: 14px; font-size: 13px; line-height: 1.6; }
+.item-details-body h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6b7c8f; }
+.item-details-body ul, .item-details-body ol { margin: 0; padding-left: 18px; }
+.item-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.item-links a { text-decoration: none; }
+@media (max-width: 720px) { .item-details-body { grid-template-columns: 1fr; } }

@@ -1,8 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {askAssistant} from './api.mjs';
-import {addEquipment, addTask, completeBackendTask, diagnosePhoto, loadWorkspace, snoozeTask} from './demoApi.mjs';
-import {DiagnoseScreen, IdentifyScreen} from './DemoFlows.jsx';
+import {addEquipment, addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, sourceLabel, uploadManual} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const EMPTY = {schema_version: 1, equipment: [], tasks: []};
@@ -72,13 +70,96 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
   </dialog>;
 }
 
-function Assistant({equipment, onTaskAdded}) {
+function ImportModal({onClose, onImported}) {
+  const dialog = useRef(null);
+  const [file, setFile] = useState(null);
+  const [source, setSource] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState('');
+  useEffect(() => {dialog.current.showModal();}, []);
+  function choose(event) {
+    const chosen = event.target.files?.[0] || null;
+    setFile(chosen); setPreview(null); setError('');
+    if (chosen && !source) setSource(chosen.name.replace(/\.[^.]+$/, ''));
+  }
+  async function run(dryRun) {
+    if (!file || pending) return;
+    setPending(dryRun ? 'preview' : 'import'); setError('');
+    try {
+      const result = await importInventory(API_BASE, file, {source, dryRun});
+      if (dryRun) setPreview(result);
+      else {await onImported(result, source.trim() || file.name.replace(/\.[^.]+$/, '')); onClose();}
+    } catch (issue) {setError(issue.message);}
+    finally {setPending('');}
+  }
+  const issues = preview ? [...preview.skipped.map(i => `Row ${i.row} skipped: ${i.message}`), ...preview.warnings.map(i => `Row ${i.row}: ${i.message}`)] : [];
+  return <dialog ref={dialog} className="modal" onClose={onClose} aria-labelledby="import-title">
+    <div className="modal-head"><div><p className="eyebrow">BRING YOUR OLD SPREADSHEET</p><h2 id="import-title">Import inventory</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><Icon name="close"/></button></div>
+    <form onSubmit={event => {event.preventDefault(); run(!preview);}}>
+      <label>Spreadsheet (.csv or .xlsx)<input type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={choose} required/></label>
+      <label>Inventory name<input value={source} onChange={event => {setSource(event.target.value); setPreview(null);}} maxLength={60} placeholder="e.g. Chemistry lab, My apartment"/></label>
+      <p className="form-hint">Columns are matched automatically (English or Spanish headers). Preview first; nothing is saved until you import.</p>
+      {preview && <div className="import-preview" aria-live="polite">
+        <p><strong>{preview.created}</strong> new · <strong>{preview.updated}</strong> updated{preview.kits_created ? ` · ${preview.kits_created} kits` : ''}{preview.stock_mismatches ? ` · ${preview.stock_mismatches} with missing units` : ''} · {preview.skipped.length} skipped</p>
+        <ul className="import-columns">{preview.columns.filter(c => c.header).map(c => <li key={c.header}><span>{c.header}</span><span>{c.field ? `→ ${c.field.replaceAll('_', ' ')}${c.method === 'ai' ? ' (AI)' : ''}` : 'ignored'}</span></li>)}</ul>
+        {issues.length > 0 && <details><summary>{issues.length} {issues.length === 1 ? 'note' : 'notes'}</summary><ul>{issues.slice(0, 50).map(text => <li key={text}>{text}</li>)}</ul></details>}
+      </div>}
+      {error && <p role="alert" className="form-error">{error}</p>}
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={!file || Boolean(pending)}>{pending === 'preview' ? 'Reading file…' : pending === 'import' ? 'Importing…' : preview ? `Import ${preview.created + preview.updated} items` : 'Preview'}<Icon name={preview ? 'check' : 'arrow'} size={16}/></button></div>
+    </form>
+  </dialog>;
+}
+
+function ItemDetails({item, onClose}) {
+  const facts = [item.difficulty && `${item.difficulty[0].toUpperCase()}${item.difficulty.slice(1)} job`,
+    item.estimated_minutes && `About ${item.estimated_minutes} min`,
+    item.severity && `${item.severity[0].toUpperCase()}${item.severity.slice(1)} importance`].filter(Boolean);
+  return <section className="item-details panel" aria-labelledby="item-details-title">
+    <div className="item-details-head">
+      {item.photo_url && <img src={item.photo_url} alt=""/>}
+      <div><p className="eyebrow">HOW TO LOOK AFTER IT</p><h2 id="item-details-title">{item.name}</h2><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ')}</p>
+        {facts.length > 0 && <div className="item-facts">{facts.map(fact => <span key={fact}>{fact}</span>)}</div>}</div>
+      <button className="icon-button" aria-label="Close details" onClick={onClose}><Icon name="close"/></button>
+    </div>
+    {item.notes && <p className="item-notes">{item.notes}</p>}
+    <div className="item-details-body">
+      {item.tools_needed.length > 0 && <div><h3>Tools</h3><ul>{item.tools_needed.map(tool => <li key={tool}>{tool}</li>)}</ul></div>}
+      {item.repair_steps.length > 0 && <div><h3>Steps</h3><ol>{item.repair_steps.map((step, index) => <li key={index}>{step}</li>)}</ol></div>}
+    </div>
+    {(item.video_url || item.purchase_url) && <div className="item-links">
+      {item.video_url && <a className="button primary" href={item.video_url} target="_blank" rel="noopener noreferrer">▶ Watch how-to video</a>}
+      {item.purchase_url && <a className="button secondary" href={item.purchase_url} target="_blank" rel="noopener noreferrer">🛒 Buy the part</a>}
+    </div>}
+  </section>;
+}
+
+function Assistant({equipment, onManualUploaded}) {
   const [equipmentId, setEquipmentId] = useState(equipment[0]?.id || '');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [photo, setPhoto] = useState(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [manualNote, setManualNote] = useState('');
+  const selected = equipment.find(item => item.id === equipmentId);
+  async function attachManual(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !equipmentId) return;
+    if (!(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) || file.size > 50 * 1024 * 1024) {
+      setError('Choose a PDF manual under 50 MB.');
+      return;
+    }
+    setUploading(true); setError(''); setManualNote('');
+    try {
+      const {manual} = await uploadManual(API_BASE, equipmentId, file);
+      setManualNote(`Manual linked: ${manual.pages} pages.${manual.truncated ? ' It is long, so only the first part is used for answers.' : ''} Answers for this item now come from it.`);
+      await onManualUploaded?.();
+    } catch (issue) {setError(issue.message);}
+    finally {setUploading(false);}
+  }
   const controller = useRef(null);
   const photoUrls = useRef(new Set());
   useEffect(() => () => { for (const url of photoUrls.current) URL.revokeObjectURL(url); }, []);
@@ -86,7 +167,7 @@ function Assistant({equipment, onTaskAdded}) {
     if (!equipment.some(item => item.id === equipmentId)) setEquipmentId(equipment[0]?.id || '');
   }, [equipment, equipmentId]);
   useEffect(() => {
-    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false);
+    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false); setManualNote('');
     return () => controller.current?.abort();
   }, [equipmentId]);
   function attachPhoto(event) {
@@ -114,7 +195,7 @@ function Assistant({equipment, onTaskAdded}) {
     event.preventDefault();
     if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
     const active = new AbortController(); controller.current = active;
-    const timeout = setTimeout(() => active.abort(), photo ? 90000 : 30000);
+    const timeout = setTimeout(() => active.abort(), photo ? 90000 : 30000); // looking at a photo takes the model longer
     const sentMessage = message.trim() || 'What should I check in this photo?';
     const sentPhoto = photo;
     setMessages(previous => [...previous, {role: 'user', text: sentMessage, photoUrl: sentPhoto?.url}]);
@@ -144,6 +225,8 @@ function Assistant({equipment, onTaskAdded}) {
     </div>
     <form onSubmit={submit}>
       <label>Equipment<select value={equipmentId} onChange={event => setEquipmentId(event.target.value)} disabled={!equipment.length}>{equipment.length ? equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">Add equipment first</option>}</select></label>
+      {API_BASE && selected && <div className="manual-row"><Icon name="list" size={15}/><span className="manual-name">{selected.manual_name ? <>Manual: <strong>{selected.manual_name}</strong></> : 'No manual linked'}</span><label className="photo-button">{uploading ? 'Uploading…' : selected.manual_name ? 'Replace PDF' : 'Upload manual'}<input type="file" accept="application/pdf,.pdf" onChange={attachManual} disabled={uploading} aria-label={`Upload a PDF manual for ${selected.name}`}/></label></div>}
+      {manualNote && <p className="form-hint" role="status">{manualNote}</p>}
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
@@ -166,7 +249,11 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [modal, setModal] = useState('');
   const [announcement, setAnnouncement] = useState('');
-  useEffect(() => {if (!API_BASE) {const warning = saveState(storage, data); if (warning) setStorageWarning(warning);}}, [data]);
+  const [source, setSource] = useState('');
+  useEffect(() => {
+    if (API_BASE) return;
+    const warning = saveState(storage, data); if (warning) setStorageWarning(warning);
+  }, [data]);
   async function refresh() {
     if (!API_BASE) return;
     try {setData(await loadWorkspace(API_BASE)); setStorageWarning('');}
@@ -180,12 +267,16 @@ export default function App() {
     document.addEventListener('visibilitychange', refresh);
     return () => {clearInterval(interval); document.removeEventListener('visibilitychange', refresh);};
   }, []);
-  const statuses = data.tasks.map(task => taskStatus(task, today));
+  // Inventory source filter (Home, UDA, …): everything below works on the chosen inventory only.
+  const sources = API_BASE ? listSources(data.equipment) : [];
+  const scopedIds = source ? new Set(data.equipment.filter(item => item.source === source).map(item => item.id)) : null;
+  const scoped = scopedIds ? {...data, equipment: data.equipment.filter(item => scopedIds.has(item.id)), tasks: data.tasks.filter(task => scopedIds.has(task.equipment_id))} : data;
+  const statuses = scoped.tasks.map(task => taskStatus(task, today));
   const overdue = statuses.filter(status => status === 'overdue').length;
   const dueToday = statuses.filter(status => status === 'due_today').length;
   const completed = statuses.filter(status => status === 'completed').length;
-  const visibleTasks = selectTasks(data, {query, filter: view === 'History' ? 'completed' : filter, equipmentId: selectedId, today});
-  const visibleEquipment = data.equipment.filter(item => `${item.name} ${item.model} ${item.location}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const visibleTasks = selectTasks(scoped, {query, filter: view === 'History' ? 'completed' : filter, equipmentId: selectedId, today});
+  const visibleEquipment = scoped.equipment.filter(item => `${item.name} ${item.model} ${item.location}`.toLowerCase().includes(query.trim().toLowerCase()));
   const equipmentById = new Map(data.equipment.map(item => [item.id, item]));
   const selected = equipmentById.get(selectedId);
   const dateLabel = new Date(`${today}T12:00:00`).toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
@@ -211,10 +302,15 @@ export default function App() {
   }
   async function save(item) {
     if (API_BASE) {
-      await (modal === 'equipment' ? addEquipment(API_BASE, item) : addTask(API_BASE, item));
+      await (modal === 'equipment' ? addEquipment(API_BASE, {...item, source}) : addTask(API_BASE, item));
       await refresh();
     } else setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]});
     setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);
+  }
+  async function imported(result, name) {
+    await refresh();
+    setSource(name); setSelectedId('');
+    setAnnouncement(`${result.created + result.updated} items imported into ${name}.`);
   }
   function reset() {
     if (window.confirm('Replace your equipment and tasks with fresh sample data? This clears changes saved in this browser.')) {
@@ -231,29 +327,28 @@ export default function App() {
     </aside>
     <main>
       <div className="topline"><span className="breadcrumb">My workspace <span>/</span> {view}</span><span className="today">{dateLabel}</span></div>
-      <header className="page-header">
-        <div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Diagnose' ? 'See what needs care.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Diagnose' ? 'A photo can help you find the next step.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div>
-        <button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button>
-        <div className="glass-scene" aria-hidden="true"><span className="toy-rail"/><span className="glass-orb"/><span className="glass-slab glass-slab-back"><span className="toy-controls"><i/><i/><i/></span></span><span className="glass-slab glass-slab-middle"><span className="toy-handle"/></span><span className="glass-slab glass-slab-front"><span className="toy-handle"/></span></div>
-      </header>
-      {API_BASE ? <div className="demo-banner"><span className="demo-dot"/><p><strong>{loading ? 'Loading backend…' : 'Backend connected.'}</strong> Equipment and tasks are shared.</p><button onClick={() => {setLoading(true); refresh();}}>Refresh</button></div>
+      <header className="page-header"><div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div><div className="header-actions">{API_BASE && <button className="button secondary" onClick={() => setModal('import')}><Icon name="list" size={17}/>Import inventory</button>}<button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button></div></header>
+      {API_BASE
+        ? <div className="demo-banner"><span className="demo-dot"/><p><strong>{loading ? 'Loading from the backend…' : 'Connected to the backend.'}</strong> Equipment, tasks and reminders are shared and powered by Gemma.</p><button onClick={() => {setLoading(true); refresh();}}>Refresh</button></div>
         : <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>}
+      {sources.length > 1 && <div className="source-filter" role="group" aria-label="Choose an inventory">{[{source: '', label: 'All inventories', count: data.equipment.length}, ...sources].map(entry => <button key={entry.source || 'all'} aria-pressed={source === entry.source} className={source === entry.source ? 'active' : ''} onClick={() => {setSource(entry.source); setSelectedId('');}}>{entry.label}<span>{entry.count}</span></button>)}</div>}
       {storageWarning && <div className="storage-warning" role="alert">{storageWarning}<button className="icon-button" onClick={() => setStorageWarning('')} aria-label="Dismiss storage notice"><Icon name="close" size={16}/></button></div>}
       {announcement && <div className="scheduled-notice app-notice" role="status">{announcement}<button className="icon-button" aria-label="Dismiss notice" onClick={() => setAnnouncement('')}><Icon name="close" size={15}/></button></div>}
       {view === 'Diagnose' && <DiagnoseScreen base={API_BASE} equipment={data.equipment} onTaskAdded={refresh}/>}
       {view === 'Equipment' && <IdentifyScreen base={API_BASE} onSaved={refresh}/>}
       {view !== 'Diagnose' && <>
       <section className="stats" aria-label="Maintenance summary">{[
-        {label: 'Equipment tracked', value: data.equipment.length, detail: 'All in one place', cta: 'View equipment', icon: 'box', action: () => navigate('Equipment')},
-        {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, cta: 'Review now', icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
-        {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', cta: 'View history', icon: 'check', action: () => navigate('History')}
-      ].map((stat, index) => <button className={`stat panel stat-${index}${index === 1 && stat.value > 0 ? ' stat-urgent' : ''}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span><span className="stat-cta">{stat.cta}<span aria-hidden="true">↗</span></span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
+        {label: 'Equipment tracked', value: scoped.equipment.length, detail: source ? sourceLabel(source) : 'All in one place', icon: 'box', action: () => navigate('Equipment')},
+        {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
+        {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', icon: 'check', action: () => navigate('History')}
+      ].map((stat, index) => <button className={`stat panel stat-${index}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
       <div className="section-toolbar"><div><p className="eyebrow">LESS GUESSWORK. MORE GETTING ON.</p><h2>{view === 'History' ? 'Maintenance history' : view === 'Maintenance' ? 'Your maintenance plan' : 'Your equipment'}</h2></div><label className="search"><Icon name="search" size={17}/><input type="search" aria-label="Search equipment and tasks" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search equipment or tasks"/></label></div>
       {(view === 'Overview' || view === 'Equipment') && <section className="equipment-grid" aria-label="Equipment">{visibleEquipment.map((item, index) => {
         const tasks = data.tasks.filter(task => task.equipment_id === item.id && !task.completed_at);
         const needsAttention = tasks.some(task => taskStatus(task, today) === 'overdue');
         return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span>{item.photo_url ? <img src={item.photo_url} alt={item.name} className="equipment-photo"/> : <EquipmentArt item={item} index={index}/>}</div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
       })}{!visibleEquipment.length && <div className="empty panel"><Icon name="box" size={30}/><h3>{query ? 'No matching equipment' : 'Start with one piece of equipment'}</h3><p>{query ? 'Try another name, model, or location.' : 'Add something you want to keep in good shape.'}</p>{!query && <button className="button primary" onClick={() => setModal('equipment')}>Add equipment</button>}</div>}</section>}
+      {(view === 'Overview' || view === 'Equipment') && selected && hasDetails(selected) && <ItemDetails item={selected} onClose={() => setSelectedId('')}/>}
       <div className="workspace-columns"><section className="task-panel panel" aria-labelledby="tasks-title">
         <div className="task-heading"><div><h2 id="tasks-title">{view === 'History' ? 'Completed tasks' : selected ? selected.name : 'Coming up next'}<span className="count">{visibleTasks.length}</span></h2><p>{view === 'History' ? 'Every completed task is a little win.' : 'The small things that keep everything running.'}</p></div><button className="text-button" onClick={() => setModal('task')} disabled={!data.equipment.length}><Icon name="plus" size={16}/>Add task</button></div>
         <div className="task-tools">{view !== 'History' && <div className="tabs" aria-label="Filter tasks">{[['open', 'Open'], ['overdue', 'Overdue'], ['due_today', 'Today'], ['all', 'All']].map(([value, label]) => <button key={value} aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>}{selected && <button className="selection-chip" onClick={() => setSelectedId('')}>Clear equipment filter<Icon name="close" size={13}/></button>}</div>
@@ -261,16 +356,17 @@ export default function App() {
           const status = taskStatus(task, today);
           const item = equipmentById.get(task.equipment_id);
           const due = new Date(`${task.due_date}T12:00:00`).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
-          const locked = Boolean(task.completed_at) && (API_BASE ? task.kind !== 'task' : !canReopenTask(data, task.id));
-          return <li key={task.id} className={`task-row ${status === 'completed' ? 'is-complete' : ''} ${task.kind === 'stock' ? 'stock-shortage' : ''}`}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'Recurring tasks cannot be reopened after the next one is scheduled' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p><div className="task-badges">{task.priority && <span className={`priority priority-${task.priority}`}>{task.priority} priority</span>}{task.kind && <span className={`kind kind-${task.kind}`}>{task.kind}</span>}</div>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time>{API_BASE && !task.completed_at && <button className="snooze-button" onClick={() => snooze(task)} aria-label={`Snooze ${task.title} for 3 days`}>Snooze 3 days</button>}</div></li>;
+          const locked = Boolean(task.completed_at) && (task.reopen_locked || !canReopenTask(data, task.id));
+          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'A later occurrence is already complete' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button>{item?.photo_url && <img className="task-thumb" src={item.photo_url} alt="" loading="lazy"/>}<div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>
-      </section><Assistant equipment={data.equipment} onTaskAdded={refresh}/></div>
-      </>}
+      </section><Assistant equipment={scoped.equipment} onManualUploaded={refresh}/></div>
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>
-    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
+    {modal === 'import'
+      ? <ImportModal onClose={() => setModal('')} onImported={imported}/>
+      : modal && <Modal key={modal} type={modal} equipment={scoped.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
   </div>;
 }

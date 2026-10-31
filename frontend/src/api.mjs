@@ -20,8 +20,16 @@ async function call(baseUrl, path, {method = 'GET', body, signal, request = fetc
   return response.status === 204 ? null : response.json();
 }
 
-export async function askAssistant(baseUrl, equipmentId, message, {signal, request = fetch} = {}) {
+export async function askAssistant(baseUrl, equipmentId, message, {image, signal, request = fetch} = {}) {
   if (!baseUrl) throw new Error('The AI assistant is not connected yet.');
+  // Text uses JSON. A photo uses multipart/form-data with fields equipment_id, message and image;
+  // the browser sets the multipart Content-Type (with its boundary) itself.
+  const body = image ? new FormData() : JSON.stringify({equipment_id: equipmentId, message});
+  if (image) {
+    body.append('equipment_id', equipmentId);
+    body.append('message', message);
+    body.append('image', image, image.name);
+  }
   const response = await request(endpoint(baseUrl, '/assistant'), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -48,8 +56,84 @@ export function toEquipment(asset, baseUrl) {
     location: asset.location || '',
     added_on: '',
     photo_url: asset.photo_url ? new URL(asset.photo_url, baseUrl).href : '',
-    missing: asset.quantity_missing || 0
+    missing: asset.quantity_missing || 0,
+    source: asset.source || 'other',
+    manual_name: asset.manual_name || (asset.manual_id ? 'Manual' : ''),
+    // How-to details (household items from data/): shown in the item details box.
+    notes: asset.notes || '',
+    difficulty: asset.difficulty || '',
+    estimated_minutes: asset.estimated_minutes || null,
+    severity: asset.severity || '',
+    tools_needed: asset.tools_needed || [],
+    repair_steps: asset.repair_steps || [],
+    video_url: safeUrl(asset.video_url),
+    purchase_url: safeUrl(asset.purchase_url)
   };
+}
+
+// Only open real web links (no javascript: or other schemes coming from data files).
+export function safeUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch { return ''; }
+}
+
+export function hasDetails(item) {
+  return Boolean(item.notes || item.tools_needed.length || item.repair_steps.length || item.video_url || item.purchase_url);
+}
+
+// Upload a PDF manual and link it to one piece of equipment; the assistant then answers from it.
+export async function uploadManual(baseUrl, equipmentId, file, {signal, request = fetch} = {}) {
+  if (!baseUrl) throw new Error('The backend is not connected yet.');
+  const body = new FormData();
+  body.append('file', file, file.name);
+  const response = await request(endpoint(baseUrl, `/assets/${equipmentId}/manual`), {method: 'POST', body, signal});
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof result.detail === 'string' ? result.detail : `The manual could not be uploaded (${response.status}).`);
+  }
+  return result;
+}
+
+// Friendly names for the backend's inventory sources; anything else shows as typed.
+const SOURCE_LABELS = {home: 'Home', 'lab-demo': 'Lab demo', uda: 'UDA', other: 'Other'};
+
+export function sourceLabel(source) {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+export function listSources(equipment) {
+  const counts = new Map();
+  for (const item of equipment) counts.set(item.source, (counts.get(item.source) || 0) + 1);
+  return [...counts].map(([source, count]) => ({source, count, label: sourceLabel(source)}))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// Spreadsheet import (.csv / .xlsx). dryRun previews without saving.
+export function importInventory(baseUrl, file, {source = '', dryRun = false, signal, request = fetch} = {}) {
+  if (!baseUrl) throw new Error('The backend is not connected yet.');
+  const body = new FormData();
+  body.append('file', file, file.name);
+  const params = new URLSearchParams({dry_run: String(dryRun)});
+  if (source.trim()) params.set('source', source.trim());
+  return request(endpoint(baseUrl, `/assets/import?${params}`), {method: 'POST', body, signal}).then(async response => {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof result.detail === 'string' ? result.detail : `The import failed (${response.status}).`;
+      throw new Error(detail);
+    }
+    return result;
+  });
+}
+
+// The UI's reminder choices, in days, as the backend's repeat interval.
+export const RECURRENCE_DAYS = {weekly: 7, monthly: 30, quarterly: 91};
+
+function recurrenceLabel(days) {
+  if (!days) return 'none';
+  const named = Object.entries(RECURRENCE_DAYS).find(([, value]) => value === days);
+  return named ? named[0] : `every ${days} days`;
 }
 
 export function toTask(task) {
@@ -61,7 +145,10 @@ export function toTask(task) {
     completed_at: task.status === 'done' ? (task.completed_on || task.due_date) : null,
     notes: [task.description, task.notes].filter(Boolean).join('\n\n'),
     priority: task.priority,
-    kind: task.kind
+    kind: task.kind,
+    recurrence: recurrenceLabel(task.interval_days),
+    // The backend already scheduled the next occurrence, so a finished recurring task stays finished.
+    reopen_locked: task.status === 'done' && Boolean(task.schedule_id)
   };
 }
 
@@ -80,14 +167,16 @@ export function completeTask(baseUrl, task, options) {
 }
 
 export function addEquipment(baseUrl, item, options) {
-  const {name, category, manufacturer, model, location} = item;
+  const {name, category, manufacturer, model, location, source} = item;
   return call(baseUrl, '/assets', {...options, method: 'POST', body: {
-    name, category, manufacturer: manufacturer || null, model: model || null, location: location || null
+    name, category, manufacturer: manufacturer || null, model: model || null, location: location || null,
+    source: source || null
   }});
 }
 
 export function addTask(baseUrl, task, options) {
   return call(baseUrl, `/assets/${task.equipment_id}/tasks`, {...options, method: 'POST', body: {
-    title: task.title, due_date: task.due_date, description: task.notes
+    title: task.title, due_date: task.due_date, description: task.notes,
+    repeat_every_days: RECURRENCE_DAYS[task.recurrence] ?? null
   }});
 }

@@ -1,0 +1,36 @@
+--- a/backend/api/schemas.py	2026-10-31 13:23:25
++++ b/backend/api/schemas.py	2026-10-31 13:23:26
+@@ -84,6 +84,15 @@
+     last_calibration_date: Optional[date] = None
+     calibration_interval_days: Optional[int] = Field(default=None, ge=1)
+     parts: list[Part] = []
++    severity: Optional[Severity] = None
++    difficulty: Optional[str] = None
++    estimated_minutes: Optional[int] = Field(default=None, ge=1)
++    tools_needed: list[str] = []
++    repair_steps: list[str] = []
++    notes: Optional[str] = None
++    video_url: Optional[str] = None
++    purchase_url: Optional[str] = None
++    image_url: Optional[str] = Field(default=None, description="Path on this server, e.g. /demo_assets/parts/task_202.jpg")
+ 
+ 
+ class AssetCreate(AssetBase):
+--- a/backend/main.py	2026-10-31 13:23:25
++++ b/backend/main.py	2026-10-31 13:23:26
+@@ -5,6 +5,7 @@
+ 
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
++from fastapi.staticfiles import StaticFiles
+ 
+ from ai import manuals
+ from api.routes import router
+@@ -34,6 +35,7 @@
+ )
+ 
+ app.include_router(router)
++app.mount("/demo_assets", StaticFiles(directory=settings.data_dir / "demo_assets", check_dir=False), name="demo_assets")
+ 
+ 
+ @app.get("/health", tags=["health"])

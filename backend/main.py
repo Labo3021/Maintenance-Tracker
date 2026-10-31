@@ -6,9 +6,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from ai import assistant, manuals
+from api import sources
 from api.routes import router
+from api.store import store
 from config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +20,8 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     manuals.load_existing()
+    if store.fresh:
+        sources.load_private(settings.data_dir / "private")
     threading.Thread(target=assistant.warm_up, daemon=True).start()
     yield
 
@@ -36,6 +41,9 @@ app.add_middleware(
 )
 
 app.include_router(router)
+# Stock images referenced by assets' image_url (data/demo_assets/...).
+if (settings.data_dir / "demo_assets").is_dir():
+    app.mount("/demo_assets", StaticFiles(directory=settings.data_dir / "demo_assets"), name="demo_assets")
 
 
 @app.get("/health", tags=["health"])

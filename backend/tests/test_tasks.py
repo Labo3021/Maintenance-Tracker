@@ -228,3 +228,97 @@ def test_assistant_endpoint(client, monkeypatch):
 def test_cors_allows_frontend(client):
     r = client.options("/api/assets", headers={"Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "GET"})
     assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
+
+
+def test_assistant_with_photo(client, monkeypatch):
+    asset = client.post("/api/assets", json={"name": "Autoclave", "model": "ST-80"}).json()
+    form = {"equipment_id": asset["id"], "message": "Is this seal OK?"}
+    r = client.post("/api/assistant", data=form, files={"image": ("seal.png", PNG, "image/png")})
+    assert r.status_code == 200 and "photo" in r.json()["answer"]
+
+    seen = {}
+    monkeypatch.setattr(settings, "ai_provider", "ollama")
+    monkeypatch.setattr(gemma_client, "generate", lambda prompt, image=None, mime_type=None, **k:
+                        seen.update(prompt=prompt, image=image, mime=mime_type) or "The seal is cracked.")
+    body = client.post("/api/assistant", data={"equipment_id": asset["id"], "message": ""},
+                       files={"image": ("seal.png", PNG, "image/png")}).json()
+    assert body["answer"] == "The seal is cracked." and body["source"] == "model"
+    assert seen["image"] == PNG and seen["mime"] == "image/png"
+    assert "attached a photo" in seen["prompt"] and "What should I check in this photo?" in seen["prompt"]
+
+    # Multipart without a photo and plain JSON both still work.
+    assert client.post("/api/assistant", data=form).status_code == 200
+    assert client.post("/api/assistant", json=form).status_code == 200
+    bad = client.post("/api/assistant", data=form, files={"image": ("x.txt", b"hi", "text/plain")})
+    assert bad.status_code == 415
+    assert client.post("/api/assistant", data={"equipment_id": asset["id"], "message": ""}).status_code == 422
+    assert client.post("/api/assistant", content=b"{{", headers={"Content-Type": "application/json"}).status_code == 422
+
+
+def test_recurring_task_creation_and_no_reopen(client):
+    asset = client.post("/api/assets", json={"name": "Bike"}).json()
+    due = TODAY + timedelta(days=2)
+    r = client.post(f"/api/assets/{asset['id']}/tasks",
+                    json={"title": "Oil chain", "due_date": iso(due), "repeat_every_days": 30, "description": "light oil"})
+    assert r.status_code == 201
+    task = r.json()
+    assert task["due_date"] == iso(due) and task["schedule_id"].startswith("schedule:")
+    view = next(t for t in open_tasks(client, asset["id"]) if t["id"] == task["id"])
+    assert view["interval_days"] == 30 and view["kind"] == "schedule"
+
+    done = client.post(f"/api/tasks/{task['id']}/complete", json={}).json()
+    assert done["next_task"]["due_date"] == iso(TODAY + timedelta(days=30))
+    r = client.patch(f"/api/assets/{asset['id']}/tasks/{task['id']}", json={"status": "open"})
+    assert r.status_code == 409 and "Recurring" in r.json()["detail"]
+
+    one_off = client.post(f"/api/assets/{asset['id']}/tasks", json={"title": "Pump tyres", "due_date": iso(TODAY)}).json()
+    assert one_off["schedule_id"] is None
+    client.post(f"/api/tasks/{one_off['id']}/complete", json={})
+    assert client.patch(f"/api/assets/{asset['id']}/tasks/{one_off['id']}", json={"status": "open"}).status_code == 200
+
+
+def test_prompts_adapt_to_household_lab_and_unknown(client, monkeypatch):
+    prompts = []
+    monkeypatch.setattr(settings, "ai_provider", "ollama")
+    monkeypatch.setattr(gemma_client, "generate", lambda prompt, **k: prompts.append(prompt) or "ok")
+    monkeypatch.setattr(gemma_client, "generate_json", lambda prompt, **k: prompts.append(prompt) or {})
+
+    home = client.post("/api/assets", json={"name": "Dryer", "category": "dryer", "environment": "household"}).json()
+    lab = client.post("/api/assets", json={"name": "Centrifuge", "category": "centrifuge"}).json()
+    bike = client.post("/api/assets", json={"name": "Bike", "category": "bicycle"}).json()  # environment defaulted to lab
+
+    for asset in (home, lab, bike):
+        client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How do I clean it?"})
+    assert "Setting: a home" in prompts[0] and "decontaminate" not in prompts[0]
+    assert "Setting: a laboratory" in prompts[1] and "lockout/tagout" in prompts[1]
+    assert "Setting: not recorded" in prompts[2]  # a bicycle isn't really lab equipment
+
+    prompts.clear()
+    client.post("/api/diagnose", files={"image": ("x.png", PNG, "image/png")}, data={"asset_id": home["id"]})
+    client.post("/api/diagnose", files={"image": ("x.png", PNG, "image/png")})
+    assert "Setting: a home" in prompts[0] and "refrigerant" in prompts[0]
+    assert all("Setting: not recorded" in p for p in prompts[2:])  # no asset: infer from the photo
+
+
+def test_upload_manual_to_asset_and_assistant_uses_it(client, monkeypatch):
+    asset = client.post("/api/assets", json={"name": "Dishwasher", "manufacturer": "Bosch"}).json()
+    pdf = make_pdf("Clean the filter monthly")
+    r = client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("Bosch SHX manual.pdf", pdf, "application/pdf")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["manual"]["pages"] == 1 and body["manual"]["truncated"] is False
+    assert body["asset"]["manual_id"] == body["manual"]["id"] and body["asset"]["manual_name"] == "Bosch SHX manual.pdf"
+
+    seen = []
+    monkeypatch.setattr(settings, "ai_provider", "ollama")
+    monkeypatch.setattr(gemma_client, "generate_json",
+                        lambda prompt, **k: seen.append(prompt) or {"answer": "Monthly.", "pages_cited": [1]})
+    answer = client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How often?"}).json()
+    assert answer == {"answer": "Monthly.", "source": "model", "pages_cited": [1], "used_manual": "Bosch SHX manual.pdf"}
+    assert "Clean the filter monthly" in seen[0]
+
+    bad = client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.txt", b"hi", "text/plain")})
+    assert bad.status_code == 415
+    assert client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.pdf", b"", "application/pdf")}).status_code == 400
+    assert client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.pdf", b"%PDF-1.4 junk", "application/pdf")}).status_code == 422
+    assert client.post("/api/assets/nope/manual", files={"file": ("m.pdf", pdf, "application/pdf")}).status_code == 404

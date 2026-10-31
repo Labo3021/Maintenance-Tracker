@@ -27,7 +27,7 @@ def _desired(asset: Asset) -> dict[str, tuple[str, str, Optional[date], Severity
             "high" if asset.quantity_actual == 0 else "medium",
         )
     if asset.next_service_due:
-        out["service"] = ("Scheduled service", "", asset.next_service_due, "medium")
+        out["service"] = ("Scheduled service", "", asset.next_service_due, asset.severity or "medium")
     if asset.next_calibration_due:
         out["calibration"] = ("Calibration", "", asset.next_calibration_due, "high")
     for part in asset.parts:
@@ -70,7 +70,10 @@ def sync_tasks(asset: Asset) -> None:
                 )
             )
         else:
-            task.title, task.description, task.due_date, task.priority = title, description, due, priority
+            # Replace rather than mutate: the old task object may be shared with a snapshot.
+            updated = task.model_copy(update={"title": title, "description": description, "due_date": due,
+                                              "priority": priority})
+            asset.tasks = [updated if t is task else t for t in asset.tasks]
 
 
 def record_completion(asset: Asset, schedule_id: Optional[str], done_on: date) -> Asset:
@@ -102,3 +105,20 @@ def task_kind(task: MaintenanceTask) -> TaskKind:
         return "task"
     prefix = task.schedule_id.split(":", 1)[0]
     return prefix if prefix in ("service", "calibration", "part", "schedule", "stock") else "task"
+
+
+def interval_for(asset: Asset, schedule_id: Optional[str]) -> Optional[int]:
+    """How often a recurring task repeats, in days (None for one-off and stock tasks)."""
+    if not schedule_id:
+        return None
+    if schedule_id == "service":
+        return asset.service_interval_days
+    if schedule_id == "calibration":
+        return asset.calibration_interval_days
+    if schedule_id.startswith("part:"):
+        name = schedule_id.removeprefix("part:")
+        return next((p.lifespan_days for p in asset.parts if p.name == name), None)
+    if schedule_id.startswith("schedule:"):
+        sid = schedule_id.removeprefix("schedule:")
+        return next((s.interval_days for s in asset.schedules if s.id == sid), None)
+    return None

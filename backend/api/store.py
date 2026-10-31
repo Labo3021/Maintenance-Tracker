@@ -6,11 +6,13 @@ All writes go to storage/inventory.json so data/ is never modified.
 """
 
 import json
+import re
 import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from config import BACKEND_DIR, settings
 
@@ -20,16 +22,21 @@ from .schemas import (
     AssetCreate,
     AssetUpdate,
     DiagnosisResult,
+    MaintenanceSchedule,
     MaintenanceTask,
     TaskCreate,
     TaskUpdate,
     TaskView,
 )
-from .scheduling import record_completion, sync_tasks, task_kind
+from .scheduling import interval_for, record_completion, sync_tasks, task_kind
 
 # How soon a diagnosis-generated task is due, by severity.
 DUE_IN_DAYS = {"critical": 0, "high": 2, "medium": 7, "low": 30}
 PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+class TaskConflict(ValueError):
+    """The requested task change isn't allowed (e.g. reopening a recurring task)."""
 
 
 def _new_id(prefix: str) -> str:
@@ -61,27 +68,39 @@ class MatchIndex:
 
 
 class InventoryStore:
-    def __init__(self, path: Path, seed_paths: list[Path]) -> None:
+    def __init__(self, path: Path, seeds: list[tuple[Path, dict]]) -> None:
+        """seeds: (json file, defaults for fields the file leaves out). All existing files are
+        loaded on first run; after that the saved inventory is the only source."""
         self.path = path
-        self.seed_paths = seed_paths
-        self._lock = threading.Lock()
+        self.seeds = seeds
+        self.fresh = False  # True when this run started from the seeds (no saved inventory)
+        # Writers never mutate a stored Asset in place: they build a new one and swap it in,
+        # so a reader holding a snapshot (or a response being serialized) never sees a half-done change.
+        self._lock = threading.RLock()
         self._assets: dict[str, Asset] = {}
         self._load()
 
     # --- persistence ---
 
     def _load(self) -> None:
-        source = self.path if self.path.exists() else next((p for p in self.seed_paths if p.exists()), None)
-        if source is None:
-            return
-        raw = json.loads(source.read_text(encoding="utf-8"))
-        items = raw.get("assets", raw) if isinstance(raw, dict) else raw
-        for item in items:
-            item.setdefault("id", _new_id("asset"))
-            asset = Asset.model_validate(item)
-            sync_tasks(asset)
-            self._assets[asset.id] = asset
-        self._save()
+        if self.path.exists():
+            sources = [(self.path, {})]
+        else:
+            sources = [(p, d) for p, d in self.seeds if p.exists()]
+            self.fresh = True
+        for source, defaults in sources:
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            items = raw.get("assets", raw) if isinstance(raw, dict) else raw
+            for item in items:
+                item = defaults | item
+                item.setdefault("id", _new_id("asset"))
+                if item["id"] in self._assets:
+                    continue  # first source wins on an ID clash
+                asset = Asset.model_validate(item)
+                sync_tasks(asset)
+                self._assets[asset.id] = asset
+        if sources:
+            self._save()
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,12 +108,25 @@ class InventoryStore:
         data = {"assets": [a.model_dump(mode="json") for a in self._assets.values()]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        # On Windows the replace fails while another process (antivirus, indexer, an editor)
+        # briefly has the file open; wait a moment and retry instead of losing the write.
+        for attempt in range(10):
+            try:
+                tmp.replace(self.path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
 
     # --- assets ---
 
+    def _snapshot(self) -> list[Asset]:
+        with self._lock:
+            return list(self._assets.values())
+
     def list_assets(self, category: Optional[str] = None, status: Optional[str] = None) -> list[Asset]:
-        assets = list(self._assets.values())
+        assets = self._snapshot()
         if category:
             assets = [a for a in assets if a.category.lower() == category.lower()]
         if status:
@@ -162,7 +194,7 @@ class InventoryStore:
     def photo_dir(self) -> Path:
         return self.path.parent / "photos"
 
-    def set_photo(self, asset_id: str, data: bytes, ext: str) -> Optional[Asset]:
+    def set_photo(self, asset_id: str, data: bytes, ext: str, save: bool = True) -> Optional[Asset]:
         with self._lock:
             asset = self._assets.get(asset_id)
             if asset is None:
@@ -174,8 +206,31 @@ class InventoryStore:
             (self.photo_dir / name).write_bytes(data)
             asset = asset.model_copy(update={"photo": name})
             self._assets[asset_id] = asset
-            self._save()
+            if save:
+                self._save()
             return asset
+
+    def attach_photos_by_code(
+        self, files: Iterable[tuple[str, int, Callable[[], bytes]]], max_bytes: int
+    ) -> tuple[int, list[str]]:
+        """files: (file name, size, read function). Each image whose name (without extension) matches an
+        asset code is attached; '03065-20.jpg' matches code '03065.20'. A .jpg beats other formats for the
+        same code. Returns (matched assets, unmatched file names)."""
+        key = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+        by_code = {key(a.code): a.id for a in self._snapshot() if a.code}
+        done: set[str] = set()
+        unmatched: list[str] = []
+        with self._lock:
+            for name, size, read in sorted(files, key=lambda f: (Path(f[0]).suffix.lower() != ".jpg", f[0])):
+                asset_id = by_code.get(key(Path(name).stem))
+                if asset_id is None:
+                    unmatched.append(name)
+                elif asset_id not in done and size <= max_bytes:
+                    self.set_photo(asset_id, read(), Path(name).suffix.lower(), save=False)
+                    done.add(asset_id)
+            if done:
+                self._save()  # once for the whole batch, not once per photo
+        return len(done), unmatched
 
     def photo_path(self, asset_id: str) -> Optional[Path]:
         asset = self._assets.get(asset_id)
@@ -198,8 +253,17 @@ class InventoryStore:
             asset = self._assets.get(asset_id)
             if asset is None:
                 return None
-            task = MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), source=source, **data.model_dump())
-            asset.tasks.append(task)
+            if data.repeat_every_days:
+                # A recurring task is a schedule whose first occurrence falls on due_date.
+                n = data.repeat_every_days
+                schedule = MaintenanceSchedule(title=data.title, interval_days=n, priority=data.priority,
+                                               last_done=data.due_date - timedelta(days=n), notes=data.description)
+                asset = self._put(asset.model_copy(update={"schedules": [*asset.schedules, schedule]}))
+                self._save()
+                return next(t for t in asset.tasks if t.schedule_id == f"schedule:{schedule.id}")
+            task = MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), source=source,
+                                   **data.model_dump(exclude={"repeat_every_days"}))
+            self._assets[asset_id] = asset.model_copy(update={"tasks": [*asset.tasks, task]})
             self._save()
             return task
 
@@ -219,16 +283,21 @@ class InventoryStore:
             asset = self._assets.get(asset_id)
             if asset is None:
                 return None
-            for i, task in enumerate(asset.tasks):
+            for task in asset.tasks:
                 if task.id == task_id:
+                    if changes.get("status") == "open" and task.status == "done" and task.schedule_id:
+                        raise TaskConflict(
+                            "Recurring tasks can't be reopened: the next occurrence is already scheduled."
+                        )
                     updated = task.model_copy(update=changes)
-                    asset.tasks[i] = updated
+                    tasks = [updated if t.id == task_id else t for t in asset.tasks]
+                    self._assets[asset_id] = asset.model_copy(update={"tasks": tasks})
                     self._save()
                     return updated
             return None
 
     def find_task(self, task_id: str) -> Optional[tuple[Asset, MaintenanceTask]]:
-        for asset in self._assets.values():
+        for asset in self._snapshot():
             for task in asset.tasks:
                 if task.id == task_id:
                     return asset, task
@@ -244,7 +313,7 @@ class InventoryStore:
         """All tasks across assets, soonest first. within_days always includes overdue tasks."""
         today = date.today()
         out = []
-        for asset in self._assets.values():
+        for asset in self._snapshot():
             if asset_id and asset.id != asset_id:
                 continue
             if environment and asset.environment != environment:
@@ -262,6 +331,7 @@ class InventoryStore:
                         asset_name=asset.name,
                         kind=task_kind(task),
                         days_until_due=days,
+                        interval_days=interval_for(asset, task.schedule_id),
                     )
                 )
         return sorted(out, key=lambda t: (t.status == "done", t.due_date, -PRIORITY_RANK[t.priority]))
@@ -277,9 +347,11 @@ class InventoryStore:
             asset, task = found
             done_on = completed_on or date.today()
             done = task.model_copy(update={"status": "done", "completed_on": done_on, "notes": notes or task.notes})
-            asset.tasks = [done if t.id == task_id else t for t in asset.tasks]
+            asset = asset.model_copy(update={"tasks": [done if t.id == task_id else t for t in asset.tasks]})
             if task.status == "open" and task.schedule_id:
                 asset = self._put(record_completion(asset, task.schedule_id, done_on))
+            else:
+                self._assets[asset.id] = asset
             self._save()
             nxt = None
             if task.schedule_id:
@@ -294,7 +366,9 @@ class InventoryStore:
             asset, task = found
             new_due = max(task.due_date, date.today()) + timedelta(days=days)
             snoozed = task.model_copy(update={"due_date": new_due, "snoozed_until": new_due})
-            asset.tasks = [snoozed if t.id == task_id else t for t in asset.tasks]
+            self._assets[asset.id] = asset.model_copy(
+                update={"tasks": [snoozed if t.id == task_id else t for t in asset.tasks]}
+            )
             self._save()
             return snoozed
 
@@ -344,5 +418,8 @@ class InventoryStore:
 
 store = InventoryStore(
     path=settings.storage_dir / "inventory.json",
-    seed_paths=[settings.data_dir / "mock_inventory.json", BACKEND_DIR / "seed" / "mock_inventory.json"],
+    seeds=[
+        (BACKEND_DIR / "seed" / "mock_inventory.json", {"environment": "lab", "source": "lab-demo"}),
+        (settings.data_dir / "mock_inventory.json", {"environment": "household", "source": "home"}),
+    ],
 )

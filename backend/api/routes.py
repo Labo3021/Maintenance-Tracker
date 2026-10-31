@@ -1,12 +1,13 @@
 """REST routes. Handlers are plain `def` so FastAPI runs slow model calls in a threadpool."""
 
 import io
-import re
 import zipfile
 from pathlib import PurePosixPath
 from typing import Literal, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from pydantic import ValidationError
 from fastapi.responses import FileResponse
 
 from ai import assistant, manual_finder, manuals
@@ -21,6 +22,7 @@ from .schemas import (
     Asset,
     AssistantAnswer,
     AssistantQuery,
+    AssetManualResult,
     AssetCreate,
     AssetStatus,
     AssetUpdate,
@@ -43,7 +45,7 @@ from .schemas import (
     TaskUpdate,
     TaskView,
 )
-from .store import store
+from .store import TaskConflict, store
 
 router = APIRouter(prefix="/api")
 
@@ -63,8 +65,18 @@ def _asset_or_404(asset_id: str) -> Asset:
 
 
 @router.get("/assets", response_model=list[Asset], tags=["assets"])
-def list_assets(category: Optional[str] = None, status: Optional[AssetStatus] = None):
-    return store.list_assets(category=category, status=status)
+def list_assets(category: Optional[str] = None, status: Optional[AssetStatus] = None, source: Optional[str] = None):
+    assets = store.list_assets(category=category, status=status)
+    return [a for a in assets if a.source == source] if source else assets
+
+
+@router.get("/sources", tags=["assets"])
+def list_sources():
+    """Datasets in the inventory with item counts, for a filter menu."""
+    counts: dict[str, int] = {}
+    for a in store.list_assets():
+        counts[a.source or "other"] = counts.get(a.source or "other", 0) + 1
+    return [{"source": s, "count": n} for s, n in sorted(counts.items())]
 
 
 @router.post("/assets", response_model=Asset, status_code=201, tags=["assets"])
@@ -83,6 +95,9 @@ def import_assets(
     stock_count_days: int = Query(
         180, ge=0, le=3650, description="Create a kit asset per group with a recurring stock count (0 = off)"
     ),
+    source: Optional[str] = Query(
+        None, max_length=200, description="Dataset name for filtering, e.g. 'uda'; defaults to the file name"
+    ),
 ):
     """Import a legacy inventory. Rows that can't be parsed are skipped and listed, not fatal."""
     data = file.file.read()
@@ -95,6 +110,7 @@ def import_assets(
             file.filename or "inventory.csv", data,
             mode=mode, dry_run=dry_run, date_order=date_order, use_ai=use_ai, sheet=sheet,
             stock_count_days=stock_count_days,
+            source=(source or "").strip() or PurePosixPath(file.filename or "inventory").stem,
         )
     except importer.ImportFileError as e:
         raise HTTPException(422, str(e)) from e
@@ -111,11 +127,6 @@ def _read_image(image: UploadFile) -> bytes:
     return data
 
 
-def _code_key(text: str) -> str:
-    """'03065-20', '03065.20' and '03065_20' all match the same code."""
-    return re.sub(r"[^a-z0-9]", "", text.lower())
-
-
 @router.post("/assets/photos/import", response_model=PhotoImportResult, tags=["assets"])
 def import_photos(file: UploadFile = File(..., description="ZIP of images named by asset code, e.g. 02001.00.jpg")):
     """Attach photos in bulk: each image's file name (without extension) is matched to an asset's code.
@@ -128,24 +139,15 @@ def import_photos(file: UploadFile = File(..., description="ZIP of images named 
     except zipfile.BadZipFile as e:
         raise HTTPException(422, "Upload a .zip file of images") from e
 
-    by_code = {_code_key(a.code): a.id for a in store.list_assets() if a.code}
-    done: set[str] = set()
-    unmatched: list[str] = []
-    for info in sorted(archive.infolist(), key=lambda i: (PurePosixPath(i.filename).suffix.lower() != ".jpg", i.filename)):
-        path = PurePosixPath(info.filename)
-        ext = path.suffix.lower()
-        if info.is_dir() or ext not in IMAGE_EXTS or path.name.startswith("."):
-            continue
-        asset_id = by_code.get(_code_key(path.stem))
-        if asset_id is None:
-            unmatched.append(path.name)
-            continue
-        if asset_id in done or info.file_size > settings.max_image_bytes:
-            continue
-        store.set_photo(asset_id, archive.read(info), ext)
-        done.add(asset_id)
+    files = [
+        (PurePosixPath(i.filename).name, i.file_size, lambda i=i: archive.read(i))
+        for i in archive.infolist()
+        if not i.is_dir() and PurePosixPath(i.filename).suffix.lower() in IMAGE_EXTS
+        and not PurePosixPath(i.filename).name.startswith(".")
+    ]
+    matched, unmatched = store.attach_photos_by_code(files, settings.max_image_bytes)
     return PhotoImportResult(
-        matched=len(done),
+        matched=matched,
         unmatched_files=unmatched,
         assets_without_photo=sum(1 for a in store.list_assets() if not a.photo),
     )
@@ -189,7 +191,10 @@ def create_task(asset_id: str, body: TaskCreate):
 @router.patch("/assets/{asset_id}/tasks/{task_id}", response_model=MaintenanceTask, tags=["assets"])
 def update_task(asset_id: str, task_id: str, body: TaskUpdate):
     _asset_or_404(asset_id)
-    task = store.update_task(asset_id, task_id, body)
+    try:
+        task = store.update_task(asset_id, task_id, body)
+    except TaskConflict as e:
+        raise HTTPException(409, str(e)) from e
     if task is None:
         raise HTTPException(404, f"Task '{task_id}' not found")
     return task
@@ -266,7 +271,9 @@ def diagnose(
     asset = _asset_or_404(asset_id) if asset_id else None
     hint = " ".join(filter(None, [asset.manufacturer, asset.model, asset.name])) if asset else None
 
-    diagnosis, source = diagnose_image(data, image.content_type, equipment_hint=hint, notes=notes)
+    environment = assistant.setting_key(asset) if asset else None
+    diagnosis, source = diagnose_image(data, image.content_type, equipment_hint=hint, notes=notes,
+                                       environment=environment)
     # Don't schedule work from a failed diagnosis; the UI shows the fallback instead.
     task = store.add_task_from_diagnosis(asset.id, diagnosis) if asset and source != "fallback" else None
     return DiagnoseResponse(diagnosis=diagnosis, source=source, task=task)
@@ -282,15 +289,31 @@ def list_manuals():
 
 @router.post("/manuals", response_model=ManualInfo, status_code=201, tags=["manuals"])
 def upload_manual(file: UploadFile = File(..., description="PDF equipment manual")):
+    return _save_manual(file)
+
+
+def _save_manual(file: UploadFile) -> ManualInfo:
     if file.content_type != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(415, "Upload a PDF file")
     data = file.file.read()
+    if not data:
+        raise HTTPException(400, "The PDF is empty")
     if len(data) > settings.max_pdf_bytes:
         raise HTTPException(413, "PDF is too large")
     try:
         return manuals.save_and_add(file.filename or "manual.pdf", data)
     except manuals.ManualError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.post("/assets/{asset_id}/manual", response_model=AssetManualResult, tags=["manuals"])
+def upload_asset_manual(asset_id: str, file: UploadFile = File(..., description="PDF manual for this equipment")):
+    """Upload a PDF and link it to the asset in one step. The assistant then answers this asset's
+    questions from the manual (with page citations). Replaces any previously linked manual."""
+    _asset_or_404(asset_id)
+    info = _save_manual(file)
+    asset = store.update(asset_id, AssetUpdate(manual_id=info.id, manual_name=info.filename))
+    return AssetManualResult(asset=asset, manual=info)
 
 
 @router.post("/manual-query", response_model=ManualAnswer, tags=["manuals"])
@@ -343,6 +366,7 @@ def find_manual(asset_id: str, download: bool = Query(True, description="Downloa
         update = {"manual_url": result.manual_url}
         if result.manual:
             update["manual_id"] = result.manual.id
+            update["manual_name"] = result.manual.filename
         store.update(asset_id, AssetUpdate(**update))
 
     if result.manual and result.verified:
@@ -371,6 +395,7 @@ def set_manual_link(asset_id: str, body: ManualLinkRequest):
         if info:
             result.manual, result.verified = info, verified
             update["manual_id"] = info.id
+            update["manual_name"] = info.filename
             result.message = "Link saved and manual loaded for questions."
         else:
             result.message = "Link saved. It isn't a downloadable PDF, so Q&A isn't available for it."
@@ -401,7 +426,36 @@ def get_photo(asset_id: str):
 
 
 @router.post("/assistant", response_model=AssistantAnswer, tags=["manuals"])
-def ask_assistant(body: AssistantQuery):
-    """Free-form question about one asset. Uses its loaded manual if it has one, otherwise
-    Gemma's general knowledge plus the asset's details and open tasks."""
-    return assistant.answer(_asset_or_404(body.equipment_id), body.message)
+async def ask_assistant(request: Request):
+    """Free-form question about one asset. Two body formats:
+    - JSON `{"equipment_id", "message"}`: uses the asset's loaded manual if it has one, otherwise
+      Gemma's general knowledge plus the asset's details and open tasks.
+    - multipart/form-data with `equipment_id`, `message` and an optional `image` (JPEG/PNG/WebP):
+      Gemma also looks at the photo."""
+    image = mime = None
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
+        form = await request.form()
+        upload = form.get("image")
+        if upload is not None and not isinstance(upload, str):
+            if upload.content_type not in IMAGE_TYPES:
+                raise HTTPException(415, f"Unsupported image type '{upload.content_type}'. Use JPEG, PNG or WebP.")
+            image, mime = await upload.read(), upload.content_type
+            if not image:
+                raise HTTPException(400, "Image is empty")
+            if len(image) > settings.max_image_bytes:
+                raise HTTPException(413, "Image is too large")
+        fields = {"equipment_id": form.get("equipment_id"), "message": form.get("message") or ""}
+        if image and not fields["message"].strip():
+            fields["message"] = "What should I check in this photo?"
+    else:
+        try:
+            fields = await request.json()
+        except ValueError as e:
+            raise HTTPException(422, "Send JSON {equipment_id, message} or multipart form data") from e
+    try:
+        body = AssistantQuery.model_validate(fields)
+    except ValidationError as e:
+        raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
+    asset = _asset_or_404(body.equipment_id)
+    return await run_in_threadpool(assistant.answer, asset, body.message, image, mime or "image/jpeg")

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canReopenTask, nextRecurringDate, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {addTask, askAssistant, completeTask, loadWorkspace, toEquipment, toTask} from '../src/api.mjs';
+import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
+import {addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, safeUrl, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -128,7 +128,7 @@ test('backend assets and tasks map to the frontend shapes', () => {
   const item = toEquipment({id: 'a1', name: 'Polea', category: 'general', code: '02360.00', manufacturer: null,
     model: null, location: 'Estante 1', photo_url: '/api/assets/a1/photo', quantity_missing: 7}, 'http://127.0.0.1:8000/api');
   assert.deepEqual(item, {id: 'a1', name: 'Polea', category: 'general', manufacturer: '', model: '02360.00',
-    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7});
+    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other', manual_name: '', notes: '', difficulty: '', estimated_minutes: null, severity: '', tools_needed: [], repair_steps: [], video_url: '', purchase_url: ''});
   const open = toTask({id: 't1', asset_id: 'a1', title: 'Missing 7 units: Polea', due_date: '2026-10-31', status: 'open',
     description: 'Counted 5 of 12.', notes: '', priority: 'medium', kind: 'stock'});
   assert.equal(open.equipment_id, 'a1');
@@ -151,8 +151,96 @@ test('backend calls use the right routes and surface error details', async () =>
   assert.deepEqual(calls.slice(2), [
     ['POST', 'http://h/api/tasks/t1/complete', {}],
     ['PATCH', 'http://h/api/assets/a1/tasks/t1', {status: 'open'}],
-    ['POST', 'http://h/api/assets/a1/tasks', {title: 'Oil', due_date: '2026-11-01', description: 'n'}]
+    ['POST', 'http://h/api/assets/a1/tasks', {title: 'Oil', due_date: '2026-11-01', description: 'n', repeat_every_days: null}]
   ]);
   const failing = async () => ({ok: false, status: 404, json: async () => ({detail: "Asset 'x' not found"})});
   await assert.rejects(addTask('http://h/api', {equipment_id: 'x'}, {request: failing}), /Asset 'x' not found/);
+});
+
+test('assistant sends a photo as multipart form data', async () => {
+  let captured;
+  const image = new File([new Uint8Array([137, 80, 78, 71])], 'seal.png', {type: 'image/png'});
+  const answer = await askAssistant('http://h/api', 'a1', 'Is this OK?', {image, request: async (url, options) => {
+    captured = {url, options};
+    return {ok: true, json: async () => ({answer: 'The seal is cracked.'})};
+  }});
+  assert.equal(answer, 'The seal is cracked.');
+  assert.equal(captured.url, 'http://h/api/assistant');
+  assert.equal(captured.options.headers, undefined); // the browser adds the multipart boundary
+  assert.ok(captured.options.body instanceof FormData);
+  assert.equal(captured.options.body.get('equipment_id'), 'a1');
+  assert.equal(captured.options.body.get('message'), 'Is this OK?');
+  assert.equal(captured.options.body.get('image').name, 'seal.png');
+});
+
+test('recurring tasks map to and from the backend', async () => {
+  const base = {id: 't', asset_id: 'a', title: 'Oil', due_date: '2026-11-01', description: '', notes: ''};
+  assert.equal(toTask({...base, status: 'open', interval_days: 30, schedule_id: 'schedule:s1'}).recurrence, 'monthly');
+  assert.equal(toTask({...base, status: 'open', interval_days: 180, schedule_id: 'service'}).recurrence, 'every 180 days');
+  assert.equal(toTask({...base, status: 'open', interval_days: null, schedule_id: null}).recurrence, 'none');
+  assert.equal(toTask({...base, status: 'done', schedule_id: 'schedule:s1'}).reopen_locked, true);
+  assert.equal(toTask({...base, status: 'done', schedule_id: null}).reopen_locked, false);
+  const sent = [];
+  const request = async (url, options) => { sent.push(JSON.parse(options.body)); return {ok: true, status: 201, json: async () => ({})}; };
+  await addTask('http://h/api', {equipment_id: 'a', title: 'Oil', due_date: '2026-11-01', notes: '', recurrence: 'quarterly'}, {request});
+  await addTask('http://h/api', {equipment_id: 'a', title: 'Once', due_date: '2026-11-01', notes: '', recurrence: 'none'}, {request});
+  assert.equal(sent[0].repeat_every_days, 91);
+  assert.equal(sent[1].repeat_every_days, null);
+});
+
+test('inventory sources are listed with friendly names and stock images resolve to the server root', () => {
+  const equipment = [{source: 'uda'}, {source: 'home'}, {source: 'uda'}, {source: 'Garage tools'}];
+  assert.deepEqual(listSources(equipment), [
+    {source: 'Garage tools', count: 1, label: 'Garage tools'},
+    {source: 'home', count: 1, label: 'Home'},
+    {source: 'uda', count: 2, label: 'UDA'}
+  ]);
+  assert.equal(sourceLabel('lab-demo'), 'Lab demo');
+  const item = toEquipment({id: 'a', name: 'Smoke detector', source: 'home', photo_url: '/demo_assets/parts/task_202.jpg'}, 'http://127.0.0.1:8000/api');
+  assert.equal(item.photo_url, 'http://127.0.0.1:8000/demo_assets/parts/task_202.jpg');
+  assert.equal(item.source, 'home');
+});
+
+test('inventory import sends the file with preview and name options', async () => {
+  let captured;
+  const file = new File(['Name,Code\nDrill,D1\n'], 'garage.csv', {type: 'text/csv'});
+  const result = await importInventory('http://h/api', file, {source: ' Garage ', dryRun: true, request: async (url, options) => {
+    captured = {url, options};
+    return {ok: true, json: async () => ({created: 1, updated: 0})};
+  }});
+  assert.equal(result.created, 1);
+  assert.equal(captured.url, 'http://h/api/assets/import?dry_run=true&source=Garage');
+  assert.equal(captured.options.method, 'POST');
+  assert.equal(captured.options.body.get('file').name, 'garage.csv');
+  await assert.rejects(importInventory('http://h/api', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'Upload a .csv or .xlsx file'})})}), /Upload a \.csv/);
+  assert.throws(() => importInventory('', file), /not connected/);
+});
+
+test('a manual PDF is uploaded and linked to one piece of equipment', async () => {
+  let captured;
+  const file = new File(['%PDF-1.4'], 'dishwasher.pdf', {type: 'application/pdf'});
+  const result = await uploadManual('http://h/api', 'a1', file, {request: async (url, options) => {
+    captured = {url, options};
+    return {ok: true, json: async () => ({asset: {id: 'a1', manual_name: 'dishwasher.pdf'}, manual: {pages: 12, truncated: false}})};
+  }});
+  assert.equal(captured.url, 'http://h/api/assets/a1/manual');
+  assert.equal(captured.options.body.get('file').name, 'dishwasher.pdf');
+  assert.equal(result.manual.pages, 12);
+  await assert.rejects(uploadManual('http://h/api', 'a1', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'PDF has no extractable text'})})}), /no extractable text/);
+  assert.equal(toEquipment({id: 'b', name: 'X', manual_id: 'm1'}, 'http://h/api').manual_name, 'Manual');
+});
+
+test('household how-to details map for the details box, and only web links are kept', () => {
+  const item = toEquipment({id: 'asset-303', name: 'Dishwasher Filter', notes: 'Clean more often with heavy cycles.',
+    difficulty: 'easy', estimated_minutes: 5, severity: 'medium', tools_needed: ['Soft brush'], repair_steps: ['Twist out the filter.'],
+    video_url: 'https://www.youtube.com/watch?v=kxRDs3GrdEk', purchase_url: 'javascript:alert(1)'}, 'http://h/api');
+  assert.equal(item.notes, 'Clean more often with heavy cycles.');
+  assert.deepEqual(item.repair_steps, ['Twist out the filter.']);
+  assert.equal(item.video_url, 'https://www.youtube.com/watch?v=kxRDs3GrdEk');
+  assert.equal(item.purchase_url, '');  // a script link from a data file is dropped
+  assert.equal(hasDetails(item), true);
+  assert.equal(hasDetails(toEquipment({id: 'x', name: 'Plain'}, 'http://h/api')), false);
+  assert.equal(safeUrl('http://example.com/a'), 'http://example.com/a');
+  assert.equal(safeUrl('ftp://example.com'), '');
+  assert.equal(safeUrl(undefined), '');
 });
