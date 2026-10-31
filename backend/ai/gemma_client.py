@@ -59,6 +59,7 @@ def _ollama(prompt: str, image: Optional[bytes], json_mode: bool) -> str:
         "messages": [message],
         "stream": False,
         "think": False,  # skip reasoning traces: faster, and keeps JSON replies clean
+        "keep_alive": "30m",  # stay loaded between requests (reloading takes ~40 s)
         "options": {"num_ctx": settings.ollama_num_ctx},
     }
     if json_mode:

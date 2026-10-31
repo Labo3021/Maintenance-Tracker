@@ -9,7 +9,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 
-from ai import manual_finder, manuals
+from ai import assistant, manual_finder, manuals
 from ai.diagnose import diagnose_image
 from ai.identify import identify_image
 from config import settings
@@ -19,6 +19,8 @@ from .calendar import build_ics
 from .schemas import (
     Alert,
     Asset,
+    AssistantAnswer,
+    AssistantQuery,
     AssetCreate,
     AssetStatus,
     AssetUpdate,
@@ -393,3 +395,13 @@ def get_photo(asset_id: str):
     if path is None:
         raise HTTPException(404, "No photo for this asset")
     return FileResponse(path, media_type=IMAGE_EXTS.get(path.suffix.lower(), "application/octet-stream"))
+
+
+# --- Assistant panel ---------------------------------------------------------
+
+
+@router.post("/assistant", response_model=AssistantAnswer, tags=["manuals"])
+def ask_assistant(body: AssistantQuery):
+    """Free-form question about one asset. Uses its loaded manual if it has one, otherwise
+    Gemma's general knowledge plus the asset's details and open tasks."""
+    return assistant.answer(_asset_or_404(body.equipment_id), body.message)
