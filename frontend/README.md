@@ -1,11 +1,10 @@
 # Maintenance Tracker frontend
 
-Owner: Person 1 (frontend). React + Vite, with plain CSS and no UI kit.
-This is a frontend demo; no real AI, shared database, or backend is bundled.
+React + Vite frontend for the Maintenance Tracker team project. It can run with fictional browser-only data, or load the shared FastAPI equipment and tasks when a backend URL is configured.
 
-## Run locally
+## Run
 
-Install Node.js 22.12 or later with npm. From the repository root:
+From the repository root:
 
 ```sh
 cd frontend
@@ -13,110 +12,29 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed in the terminal (normally http://127.0.0.1:5173).
-Dependencies install once; `npm run dev` is used each time you work on the UI.
+Open the URL shown by Vite, usually http://127.0.0.1:5173. Run `npm test` and `npm run build` before sharing changes.
 
-```sh
-npm test
-npm run build
-npm run preview
-```
+## Connect the backend
 
-`npm test` checks the data logic and API adapter. `npm run build` creates `dist/`;
-`npm run preview` serves that production build. Do not commit `node_modules/` or
-`dist/`. Commit the generated package-lock.json after the first successful install.
-
-## What works
-
-- Overview, equipment, maintenance, and history navigation.
-- Three fictional sample products with original inline SVG illustrations.
-- Equipment search, task search, task status filters, and equipment selection.
-- Add equipment and tasks with validated input and native keyboard-accessible dialogs.
-- Complete and reopen tasks; counts and history update immediately.
-- Optional weekly, monthly, or quarterly reminders. Completing one keeps its
-  history and creates the next due occurrence. Reopening it removes the next
-  open occurrence; older history stays locked once a later occurrence is done.
-- Browser localStorage persistence, with a visible warning if storage fails.
-- Responsive layouts and reduced-motion support.
-- Photo upload and mobile camera controls with a local JPG/PNG/WebP preview
-  (10 MB limit), plus a diagnostic chat transcript. Photos and messages are
-  session-only and are not saved in localStorage.
-- A pending AI adapter with loading/error states, cancellation, and a 30-second
-  timeout. The send button stays disabled until a backend URL is configured.
-
-Sample reminders are relative to the first visit, not manufacturer schedules.
-Saved records keep their dates on subsequent visits. All task dates use the
-user's local calendar. Reset demo asks before replacing locally saved changes.
-
-## Proposed backend handoff
-
-The data model is in `src/model.mjs`. The frontend currently stores equipment
-and tasks only in the browser. It does not fetch or synchronize these records.
-
-Before connecting the AI panel, agree this proposed endpoint with Person 2:
-
-```http
-POST /assistant
-Content-Type: application/json
-
-{"equipment_id":"eq-001","message":"Where can I find the product manual?"}
-```
-
-```json
-{"answer":"A plain-text response from the backend."}
-```
-
-The backend must know the same equipment IDs. For user-created equipment,
-implement equipment/task synchronization before using those IDs with the AI.
-Treat this endpoint as a proposal; change `src/api.mjs` to match the agreed API.
-For a question with a photo, the proposed route accepts `multipart/form-data`
-with text fields `equipment_id` and `message`, and a file field named `image`.
-Text-only requests keep the JSON shape above. Confirm the image field name,
-size limit, and response shape with Person 2 before connecting the backend.
-
-To configure an available backend, copy `.env.example` to `.env` and set:
+The backend code is on `main`. Run it separately (see `backend/README.md`) and copy `.env.example` to `frontend/.env` with:
 
 ```dotenv
-VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_API_BASE_URL=http://127.0.0.1:8000/api
 ```
 
-Restart Vite after changing `.env`. The backend must permit the frontend origin
-through CORS. With an empty URL, the Ask assistant button is intentionally
-disabled and no question is sent. Model selection and credentials stay on the
-backend. Every `VITE_` value is public: never put an API key there.
+Restart Vite after changing `.env`. Ensure the backend's `CORS_ORIGINS` includes the exact Vite origin, such as `http://127.0.0.1:5173`. Never put API keys in a `VITE_` value; they are public in the browser. With the URL empty, the app keeps a fictional local demo and AI actions remain disabled.
 
-## One-minute UI acceptance check
+## Demo flow
 
-1. Open Overview: three products and three open tasks appear.
-2. Select the bicycle: only its tasks appear. Clear the equipment filter.
-3. Complete the overdue task: the attention count decreases; History shows it.
-4. Reopen it from History, then return to Maintenance.
-5. Add equipment, then add a task for it. Search for its name.
-6. Refresh: added records and completion changes remain.
-7. Use a phone-width window: navigation, forms, and cards remain usable.
-8. Use Tab, Enter, and Escape: open a dialog, submit it, or close it.
-9. With no backend configured, confirm the panel says AI connection pending.
-10. Choose Upload photo, inspect the preview, and remove it. On a phone, try
-    Take photo. No image is transmitted while the backend is pending.
-11. Add a weekly recurring task and complete it: History retains the finished
-    item and Maintenance shows the next due date. Refresh to confirm both stay.
+1. Open **Diagnose**, upload or take a photo, select an existing item, and describe symptoms. `POST /api/diagnose` returns severity, confidence, hazards, tools, parts, steps, technician advice, and (if the model succeeds) a scheduled task. A fallback response is clearly marked and creates no task.
+2. Open **Equipment**, use **Add equipment from a photo**, and review the result of `POST /api/assets/identify`. Answer its text/date questions, edit or remove suggested schedules, then save the complete draft with `POST /api/assets`. Empty last-done dates create tasks due today.
+3. **Maintenance** shows priority and kind, highlights stock shortages, and offers **Snooze 3 days**. Completing a recurring task displays the next due date returned by the backend. Reopening backend recurring tasks is disabled until the duplicate-task backend gap is fixed.
+4. Diagnosis and identification show a spinner and use a 90-second timeout. Text assistant requests retain a 30-second timeout. The chat photo button now calls `/api/diagnose` rather than sending an unsupported image to `/api/assistant`.
 
-## Your first frontend edit
+The original browser demo still supports local equipment, tasks, History, recurrence, and reset. `src/demoApi.mjs` contains the shared backend adapters; `src/DemoFlows.jsx` contains the photo flows; `src/demo-flow.css`, `src/vivid.css`, and `src/depth.css` style the interface.
 
-Change the heading `Keep good things going.` in `src/App.jsx`, save, and watch
-Vite refresh the browser. Change the theme colors in `src/vivid.css` next.
-`styles.css` holds the base layout; `vivid.css` adds the brighter product theme;
-`depth.css` adds the soft isometric cube and raised surface details.
-`App.jsx` owns screens and interactions; `model.mjs` owns data behavior;
-`api.mjs` is the single place to adapt the AI request.
+## Checks
 
-## Verification
-
-Verified on Windows with Node.js 22.14.0 and npm 10.9.2:
-
-- `npm install` completed and generated `package-lock.json`.
-- `npm test` passed all 12 model/API tests after the role update.
-- `npm run build` completed successfully with Vite 7.3.7.
-
-The original task completion and History flow were manually checked. Use the
-remaining UI acceptance steps above before merging.
+- `npm test`: 15 tests, including multipart diagnosis, identification draft, backend task actions, and local data behavior.
+- `npm run build`: production build passed with Vite 7.3.7.
+- Browser interaction with the live backend still needs a manual pass after the backend is running. The first screen to test is Diagnose with a mock backend photo, followed by identification and task completion.

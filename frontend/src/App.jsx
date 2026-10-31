@@ -1,8 +1,11 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
 import {askAssistant} from './api.mjs';
+import {addEquipment, addTask, completeBackendTask, diagnosePhoto, loadWorkspace, snoozeTask} from './demoApi.mjs';
+import {DiagnoseScreen, IdentifyScreen} from './DemoFlows.jsx';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const EMPTY = {schema_version: 1, equipment: [], tasks: []};
 const storage = {getItem: key => window.localStorage.getItem(key), setItem: (key, value) => window.localStorage.setItem(key, value)};
 const labels = {overdue: 'Overdue', due_today: 'Due today', upcoming: 'Upcoming', completed: 'Completed'};
 const paths = {
@@ -35,22 +38,25 @@ function EquipmentArt({item, index}) {
 function Modal({type, equipment, selectedId, onClose, onSave}) {
   const dialog = useRef(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   useEffect(() => {dialog.current.showModal();}, []);
   const isEquipment = type === 'equipment';
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     const fields = Object.fromEntries(new FormData(event.currentTarget));
+    setSaving(true);
     try {
-      onSave(isEquipment ? createEquipment(fields) : createTask(fields, equipment));
+      await onSave(isEquipment ? createEquipment(fields) : createTask(fields, equipment));
       onClose();
     } catch (issue) {setError(issue.message);}
+    finally {setSaving(false);}
   }
   return <dialog ref={dialog} className="modal" onClose={onClose} aria-labelledby="modal-title">
     <div className="modal-head"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2 id="modal-title">{isEquipment ? 'Add equipment' : 'Add a maintenance task'}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><Icon name="close"/></button></div>
     <form onSubmit={submit}>
       {isEquipment ? <>
         <label>Equipment name<input autoFocus name="name" required maxLength={100} placeholder="e.g. Workshop drill"/></label>
-        <div className="form-grid"><label>Category<select name="category" defaultValue="appliance"><option value="appliance">Appliance</option><option value="bicycle">Bicycle</option><option value="tool">Tool</option><option value="other">Other</option></select></label><label>Location<input name="location" maxLength={100} placeholder="e.g. Garage"/></label></div>
+        <div className="form-grid"><label>Category<input name="category" list="categories" defaultValue="appliance" required maxLength={60}/><datalist id="categories"><option value="appliance"/><option value="bicycle"/><option value="tool"/><option value="kit"/><option value="centrifuge"/><option value="other"/></datalist></label><label>Location<input name="location" maxLength={100} placeholder="e.g. Garage"/></label></div>
         <div className="form-grid"><label>Manufacturer<input name="manufacturer" maxLength={100} placeholder="Optional"/></label><label>Model<input name="model" maxLength={100} placeholder="Optional"/></label></div>
       </> : <>
         <label>Task title<input autoFocus name="title" required maxLength={140} placeholder="e.g. Check the product manual"/></label>
@@ -59,13 +65,13 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
         <label>Notes<textarea name="notes" rows={3} maxLength={1000} placeholder="Any details you want to remember"/></label>
       </>}
       {error && <p role="alert" className="form-error">{error}</p>}
-      <p className="form-hint">Saved in this browser. Shared team storage is not connected yet.</p>
-      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary">{isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
+      <p className="form-hint">{API_BASE ? 'Saved to the shared backend.' : 'Saved in this browser.'}</p>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Saving…' : isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
     </form>
   </dialog>;
 }
 
-function Assistant({equipment}) {
+function Assistant({equipment, onTaskAdded}) {
   const [equipmentId, setEquipmentId] = useState(equipment[0]?.id || '');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
@@ -107,14 +113,20 @@ function Assistant({equipment}) {
     event.preventDefault();
     if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
     const active = new AbortController(); controller.current = active;
-    const timeout = setTimeout(() => active.abort(), 30000);
+    const timeout = setTimeout(() => active.abort(), photo ? 90000 : 30000);
     const sentMessage = message.trim() || 'What should I check in this photo?';
     const sentPhoto = photo;
     setMessages(previous => [...previous, {role: 'user', text: sentMessage, photoUrl: sentPhoto?.url}]);
     setMessage(''); setPhoto(null); setPending(true); setError('');
     try {
-      const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
-      if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
+      const response = sentPhoto
+        ? await diagnosePhoto(API_BASE, sentPhoto.file, equipmentId, sentMessage, {signal: active.signal})
+        : await askAssistant(API_BASE, equipmentId, sentMessage, {signal: active.signal});
+      if (controller.current === active && !active.signal.aborted) {
+        const text = sentPhoto ? `${response.source === 'fallback' ? 'AI unavailable; generic advice. ' : ''}${response.diagnosis.issue} (${response.diagnosis.severity}). ${response.diagnosis.steps?.map(step => step.instruction).join(' ') || ''}${response.task ? ` Added to schedule, due ${response.task.due_date}.` : ''}` : response;
+        setMessages(previous => [...previous, {role: 'assistant', text}]);
+        if (response.task) await onTaskAdded();
+      }
     }
     catch (issue) {if (controller.current === active) setError(issue.name === 'AbortError' ? 'The request timed out. Please try again.' : issue.message);}
     finally {clearTimeout(timeout); if (controller.current === active) setPending(false);}
@@ -134,17 +146,18 @@ function Assistant({equipment}) {
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
-      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? <><span className="spinner"/>Working…</> : photo ? 'Diagnose photo' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
     </form>
-    {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
+    {!API_BASE && <p className="form-hint">Photo preview works locally. Connect the backend to diagnose.</p>}
     <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
   </aside>;
 }
 
 export default function App() {
-  const [initial] = useState(() => loadState(storage));
+  const [initial] = useState(() => API_BASE ? {data: EMPTY, warning: ''} : loadState(storage));
   const [data, setData] = useState(initial.data);
   const [storageWarning, setStorageWarning] = useState(initial.warning);
+  const [loading, setLoading] = useState(Boolean(API_BASE));
   const [today, setToday] = useState(localDate());
   const [view, setView] = useState('Overview');
   const [query, setQuery] = useState('');
@@ -152,7 +165,14 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [modal, setModal] = useState('');
   const [announcement, setAnnouncement] = useState('');
-  useEffect(() => {const warning = saveState(storage, data); if (warning) setStorageWarning(warning);}, [data]);
+  useEffect(() => {if (!API_BASE) {const warning = saveState(storage, data); if (warning) setStorageWarning(warning);}}, [data]);
+  async function refresh() {
+    if (!API_BASE) return;
+    try {setData(await loadWorkspace(API_BASE)); setStorageWarning('');}
+    catch (issue) {setStorageWarning(`Could not load data from the backend: ${issue.message}`);}
+    finally {setLoading(false);}
+  }
+  useEffect(() => {if (API_BASE) refresh();}, []);
   useEffect(() => {
     const refresh = () => setToday(localDate());
     const interval = setInterval(refresh, 60000);
@@ -169,9 +189,31 @@ export default function App() {
   const selected = equipmentById.get(selectedId);
   const dateLabel = new Date(`${today}T12:00:00`).toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
   function navigate(next) {setView(next); setSelectedId(''); setQuery(''); setFilter('open');}
-  function complete(task) {
-    setData(previous => toggleTask(previous, task.id, today));
-    setAnnouncement(`${task.title}: ${task.completed_at ? 'reopened' : 'completed'}.`);
+  async function complete(task) {
+    if (API_BASE) {
+      try {
+        const result = await completeBackendTask(API_BASE, task);
+        await refresh();
+        setAnnouncement(task.completed_at ? `${task.title} reopened.` : result?.next_task ? `Done. Next one due ${result.next_task.due_date}.` : `${task.title} completed.`);
+      } catch (issue) {setStorageWarning(issue.message);}
+    } else {
+      setData(previous => toggleTask(previous, task.id, today));
+      setAnnouncement(`${task.title}: ${task.completed_at ? 'reopened' : 'completed'}.`);
+    }
+  }
+  async function snooze(task) {
+    try {
+      await snoozeTask(API_BASE, task.id, 3);
+      await refresh();
+      setAnnouncement(`${task.title} snoozed for 3 days.`);
+    } catch (issue) {setStorageWarning(issue.message);}
+  }
+  async function save(item) {
+    if (API_BASE) {
+      await (modal === 'equipment' ? addEquipment(API_BASE, item) : addTask(API_BASE, item));
+      await refresh();
+    } else setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]});
+    setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);
   }
   function reset() {
     if (window.confirm('Replace your equipment and tasks with fresh sample data? This clears changes saved in this browser.')) {
@@ -182,29 +224,34 @@ export default function App() {
     <aside className="sidebar">
       <a className="brand" href="#" onClick={event => {event.preventDefault(); navigate('Overview');}}><span className="brand-mark"><Icon name="check" size={26}/></span><span>Maintenance<span className="brand-sub">TRACKER</span></span></a>
       <p className="nav-label">YOUR WORKSPACE</p>
-      <nav aria-label="Main navigation">{[['Overview', 'grid'], ['Equipment', 'box'], ['Maintenance', 'list'], ['History', 'clock']].map(([label, icon]) => <button key={label} className={`nav-item ${view === label ? 'active' : ''}`} aria-current={view === label ? 'page' : undefined} onClick={() => navigate(label)}><Icon name={icon}/>{label}{label === 'Maintenance' && overdue + dueToday > 0 && <span className="nav-count">{overdue + dueToday}</span>}</button>)}</nav>
+      <nav aria-label="Main navigation">{[['Overview', 'grid'], ['Diagnose', 'camera'], ['Equipment', 'box'], ['Maintenance', 'list'], ['History', 'clock']].map(([label, icon]) => <button key={label} className={`nav-item ${view === label ? 'active' : ''}`} aria-current={view === label ? 'page' : undefined} onClick={() => navigate(label)}><Icon name={icon}/>{label}{label === 'Maintenance' && overdue + dueToday > 0 && <span className="nav-count">{overdue + dueToday}</span>}</button>)}</nav>
       <div className="sidebar-note"><span className="little-leaf">↗</span><h3>Small care.<br/>Longer life.</h3><p>A little maintenance goes a long way.</p></div>
       <div className="sidebar-bottom"><span className="avatar">MT</span><div><strong>My workspace</strong><span>Local demo</span></div></div>
     </aside>
     <main>
       <div className="topline"><span className="breadcrumb">My workspace <span>/</span> {view}</span><span className="today">{dateLabel}</span></div>
       <header className="page-header">
-        <div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div>
+        <div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Diagnose' ? 'See what needs care.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Diagnose' ? 'A photo can help you find the next step.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div>
         <button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button>
-        <div className="hero-cube" aria-hidden="true"><span className="cube-top"/><span className="cube-left"/><span className="cube-right"/></div>
+        <div className="glass-scene" aria-hidden="true"><span className="toy-rail"/><span className="glass-orb"/><span className="glass-slab glass-slab-back"><span className="toy-controls"><i/><i/><i/></span></span><span className="glass-slab glass-slab-middle"><span className="toy-handle"/></span><span className="glass-slab glass-slab-front"><span className="toy-handle"/></span></div>
       </header>
-      <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>
+      {API_BASE ? <div className="demo-banner"><span className="demo-dot"/><p><strong>{loading ? 'Loading backend…' : 'Backend connected.'}</strong> Equipment and tasks are shared.</p><button onClick={() => {setLoading(true); refresh();}}>Refresh</button></div>
+        : <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>}
       {storageWarning && <div className="storage-warning" role="alert">{storageWarning}<button className="icon-button" onClick={() => setStorageWarning('')} aria-label="Dismiss storage notice"><Icon name="close" size={16}/></button></div>}
+      {announcement && <div className="scheduled-notice app-notice" role="status">{announcement}<button className="icon-button" aria-label="Dismiss notice" onClick={() => setAnnouncement('')}><Icon name="close" size={15}/></button></div>}
+      {view === 'Diagnose' && <DiagnoseScreen base={API_BASE} equipment={data.equipment} onTaskAdded={refresh}/>}
+      {view === 'Equipment' && <IdentifyScreen base={API_BASE} onSaved={refresh}/>}
+      {view !== 'Diagnose' && <>
       <section className="stats" aria-label="Maintenance summary">{[
-        {label: 'Equipment tracked', value: data.equipment.length, detail: 'All in one place', icon: 'box', action: () => navigate('Equipment')},
-        {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
-        {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', icon: 'check', action: () => navigate('History')}
-      ].map((stat, index) => <button className={`stat panel stat-${index}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
+        {label: 'Equipment tracked', value: data.equipment.length, detail: 'All in one place', cta: 'View equipment', icon: 'box', action: () => navigate('Equipment')},
+        {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, cta: 'Review now', icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
+        {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', cta: 'View history', icon: 'check', action: () => navigate('History')}
+      ].map((stat, index) => <button className={`stat panel stat-${index}${index === 1 && stat.value > 0 ? ' stat-urgent' : ''}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span><span className="stat-cta">{stat.cta}<span aria-hidden="true">↗</span></span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
       <div className="section-toolbar"><div><p className="eyebrow">LESS GUESSWORK. MORE GETTING ON.</p><h2>{view === 'History' ? 'Maintenance history' : view === 'Maintenance' ? 'Your maintenance plan' : 'Your equipment'}</h2></div><label className="search"><Icon name="search" size={17}/><input type="search" aria-label="Search equipment and tasks" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search equipment or tasks"/></label></div>
       {(view === 'Overview' || view === 'Equipment') && <section className="equipment-grid" aria-label="Equipment">{visibleEquipment.map((item, index) => {
         const tasks = data.tasks.filter(task => task.equipment_id === item.id && !task.completed_at);
         const needsAttention = tasks.some(task => taskStatus(task, today) === 'overdue');
-        return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span><EquipmentArt item={item} index={index}/></div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
+        return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span>{item.photo_url ? <img src={item.photo_url} alt={item.name} className="equipment-photo"/> : <EquipmentArt item={item} index={index}/>}</div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
       })}{!visibleEquipment.length && <div className="empty panel"><Icon name="box" size={30}/><h3>{query ? 'No matching equipment' : 'Start with one piece of equipment'}</h3><p>{query ? 'Try another name, model, or location.' : 'Add something you want to keep in good shape.'}</p>{!query && <button className="button primary" onClick={() => setModal('equipment')}>Add equipment</button>}</div>}</section>}
       <div className="workspace-columns"><section className="task-panel panel" aria-labelledby="tasks-title">
         <div className="task-heading"><div><h2 id="tasks-title">{view === 'History' ? 'Completed tasks' : selected ? selected.name : 'Coming up next'}<span className="count">{visibleTasks.length}</span></h2><p>{view === 'History' ? 'Every completed task is a little win.' : 'The small things that keep everything running.'}</p></div><button className="text-button" onClick={() => setModal('task')} disabled={!data.equipment.length}><Icon name="plus" size={16}/>Add task</button></div>
@@ -213,15 +260,16 @@ export default function App() {
           const status = taskStatus(task, today);
           const item = equipmentById.get(task.equipment_id);
           const due = new Date(`${task.due_date}T12:00:00`).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
-          const locked = Boolean(task.completed_at) && !canReopenTask(data, task.id);
-          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'A later occurrence is already complete' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
+          const locked = Boolean(task.completed_at) && (API_BASE ? task.kind !== 'task' : !canReopenTask(data, task.id));
+          return <li key={task.id} className={`task-row ${status === 'completed' ? 'is-complete' : ''} ${task.kind === 'stock' ? 'stock-shortage' : ''}`}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'Recurring tasks cannot be reopened after the next one is scheduled' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p><div className="task-badges">{task.priority && <span className={`priority priority-${task.priority}`}>{task.priority} priority</span>}{task.kind && <span className={`kind kind-${task.kind}`}>{task.kind}</span>}</div>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time>{API_BASE && !task.completed_at && <button className="snooze-button" onClick={() => snooze(task)} aria-label={`Snooze ${task.title} for 3 days`}>Snooze 3 days</button>}</div></li>;
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>
-      </section><Assistant equipment={data.equipment}/></div>
+      </section><Assistant equipment={data.equipment} onTaskAdded={refresh}/></div>
+      </>}
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>
-    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={item => {setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]}); setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);}}/>}
+    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
   </div>;
 }

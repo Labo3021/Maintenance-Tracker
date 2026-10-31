@@ -1,0 +1,46 @@
+.flow-page {margin: 26px 0 38px; display: grid; gap: 20px;}
+.flow-intro {max-width: 760px;}
+.flow-intro h2 {font-size: clamp(1.65rem, 3vw, 2.5rem); letter-spacing: -.04em; margin: 5px 0 8px;}
+.flow-intro p:last-child {color: #5b6d67; line-height: 1.6;}
+.flow-form, .diagnosis-result, .identified-draft {padding: clamp(20px, 3vw, 32px); border-radius: 24px;}
+.flow-form {display: grid; gap: 20px;}
+.flow-form > label, .identified-draft label, .flow-form .form-grid label {display: grid; gap: 8px;}
+.flow-photo {display: grid; gap: 14px;}
+.flow-photo-preview {min-height: 225px; border: 1px dashed #9aafa3; border-radius: 19px; background: linear-gradient(140deg,#f1f7f0,#e3eff0 60%,#eff2df); display: grid; place-items: center; overflow: hidden;}
+.flow-photo-preview img {width: 100%; height: 320px; object-fit: contain;}
+.flow-photo-preview > div {display: grid; justify-items: center; gap: 9px; color: #496458; text-align: center;}
+.flow-photo-preview span {font-size: 2.7rem; color: #357e76;}
+.flow-photo-preview small {color: #788b82;}
+.flow-form .button {justify-self: start;}
+.spinner {display: inline-block; width: 16px; height: 16px; border: 2px solid #ffffff80; border-top-color: white; border-radius: 50%; animation: flow-spin .8s linear infinite; margin-right: 9px; vertical-align: middle;}
+@keyframes flow-spin {to {transform: rotate(360deg)}}
+.result-header {display: flex; align-items: start; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 20px;}
+.result-header h3 {font-size: clamp(1.5rem, 2.6vw, 2.2rem); margin: 5px 0;}
+.result-header p {color: #5e7167;}
+.result-tags {display: flex; gap: 8px; flex-wrap: wrap; align-items: center;}
+.result-tags > span, .confidence-tag {padding: 7px 12px; border-radius: 100px; background: #e8f2ec; color: #28584b; font-size: .83rem; font-weight: 650;}
+.severity {text-transform: capitalize;}
+.severity.medium {background: #fff0c9; color: #815715;}
+.severity.high, .severity.critical {background: #ffe1d6; color: #9a3124;}
+.safety-warning {background: #fff0e8; border: 1px solid #edb49b; border-left: 5px solid #db7055; border-radius: 14px; color: #773a2c; padding: 16px 20px; margin: 16px 0; line-height: 1.5;}
+.safety-warning ul {margin: 8px 0 0; padding-left: 20px;}
+.technician-flag {display: inline-block; border-radius: 12px; background: #603b38; color: white; font-weight: 700; padding: 10px 14px;}
+.result-columns {display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px;}
+.diagnosis-result h4, .identified-draft h4 {margin: 18px 0 8px;}
+.diagnosis-result li {margin-bottom: 8px;}
+.repair-steps {padding-left: 26px; line-height: 1.6;}
+.repair-steps small {display: block; color: #9a4937; font-weight: 600;}
+.scheduled-notice {display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #dff2e7; border: 1px solid #a6d2b9; color: #245646; padding: 13px 17px; border-radius: 13px; font-weight: 650; margin: 15px 0;}
+.app-notice {margin: 12px 0;}
+.identified-draft {display: grid; gap: 16px;}
+.questions, .schedule-editor {display: grid; gap: 12px; border-top: 1px solid #d8e5dc; padding-top: 12px;}
+.questions small {color: #60766b;}
+.schedule-row {display: grid; grid-template-columns: minmax(0,2fr) minmax(115px,1fr) auto; align-items: end; gap: 12px; padding: 12px; background: #f2f7f3; border-radius: 12px;}
+.task-badges {display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;}
+.priority, .kind {font-size: .72rem; padding: 3px 7px; border-radius: 6px; text-transform: capitalize; background: #eaf2ed; color: #426856;}
+.priority-high, .priority-critical, .kind-stock {background: #ffeadc; color: #9b502c;}
+.stock-shortage {background: #fffbf5;}
+.equipment-art .equipment-photo {width: 100%; height: 100%; max-height: 180px; object-fit: cover;}
+.snooze-button {border: 0; background: transparent; color: #376b60; text-decoration: underline; cursor: pointer; font: inherit; font-size: .72rem; white-space: nowrap;}
+@media(max-width: 720px) {.result-columns, .schedule-row {grid-template-columns: 1fr;} .flow-photo-preview img {height: 240px;} .flow-form .button {width: 100%;}}
+@media(prefers-reduced-motion: reduce) {.spinner {animation: none;}}
