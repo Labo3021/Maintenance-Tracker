@@ -1,8 +1,9 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {askAssistant} from './api.mjs';
+import {addEquipment, addTask, askAssistant, completeTask, loadWorkspace} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const EMPTY = {schema_version: 1, equipment: [], tasks: []};
 const storage = {getItem: key => window.localStorage.getItem(key), setItem: (key, value) => window.localStorage.setItem(key, value)};
 const labels = {overdue: 'Overdue', due_today: 'Due today', upcoming: 'Upcoming', completed: 'Completed'};
 const paths = {
@@ -24,6 +25,7 @@ function Icon({name, size = 20}) {
 }
 
 function EquipmentArt({item, index}) {
+  if (item.photo_url) return <img className="equipment-photo" src={item.photo_url} alt="" loading="lazy"/>;
   if (item.category === 'bicycle') return <svg viewBox="0 0 280 160" aria-hidden="true"><ellipse cx="140" cy="139" rx="104" ry="8" fill="#cbd7ce"/><g fill="none" stroke="#344e42" strokeWidth="5"><circle cx="64" cy="104" r="36"/><circle cx="216" cy="104" r="36"/><path d="m64 104 38-65 38 65H64l47-48h78l27 48 M140 104l-29-64 M94 39h31 M182 27h18l-11 29" strokeLinejoin="round"/><circle cx="140" cy="104" r="5" fill="#344e42"/></g></svg>;
   if (index === 2 && item.id === 'eq-003') return <svg viewBox="0 0 280 160" aria-hidden="true"><ellipse cx="140" cy="145" rx="60" ry="7" fill="#d8d1c6"/><path d="M134 96h12v39h-12z" fill="#a79e90"/><path d="M110 135q30-12 60 0v9h-60z" fill="#bfb5a5"/><circle cx="140" cy="61" r="48" fill="#eee9df" stroke="#b1a796" strokeWidth="3"/><g fill="none" stroke="#bdb3a3"><circle cx="140" cy="61" r="38"/><circle cx="140" cy="61" r="28"/><path d="M92 61h96 M140 13v96 M106 27l68 68 M106 95l68-68"/></g><g fill="#c5bbab"><path d="M140 61q-31-5-20-27t20 27 M140 61q18-26 33-7t-33 7 M140 61q15 28-10 31t10-31"/></g><circle cx="140" cy="61" r="8" fill="#b1a796"/></svg>;
   if (item.category === 'appliance') return <svg viewBox="0 0 280 160" aria-hidden="true"><ellipse cx="140" cy="144" rx="65" ry="8" fill="#d7dbd5"/><rect x="94" y="18" width="92" height="124" rx="20" fill="#fafbf7" stroke="#bdc6bc" strokeWidth="2"/><ellipse cx="140" cy="32" rx="32" ry="7" fill="#dfe5dc"/><ellipse cx="140" cy="32" rx="23" ry="3" fill="#b4c1b0"/><circle cx="140" cy="56" r="4" fill="#98b38d"/>{Array.from({length: 8}, (_, i) => <path key={i} d={`M109 ${75 + i * 6}h62`} stroke="#d7ded3" strokeWidth="2"/>)}<path d="M104 136h72" stroke="#cbd4c6" strokeWidth="2"/></svg>;
@@ -33,15 +35,18 @@ function EquipmentArt({item, index}) {
 function Modal({type, equipment, selectedId, onClose, onSave}) {
   const dialog = useRef(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   useEffect(() => {dialog.current.showModal();}, []);
   const isEquipment = type === 'equipment';
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     const fields = Object.fromEntries(new FormData(event.currentTarget));
+    setSaving(true);
     try {
-      onSave(isEquipment ? createEquipment(fields) : createTask(fields, equipment));
+      await onSave(isEquipment ? createEquipment(fields) : createTask(fields, equipment));
       onClose();
     } catch (issue) {setError(issue.message);}
+    finally {setSaving(false);}
   }
   return <dialog ref={dialog} className="modal" onClose={onClose} aria-labelledby="modal-title">
     <div className="modal-head"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2 id="modal-title">{isEquipment ? 'Add equipment' : 'Add a maintenance task'}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><Icon name="close"/></button></div>
@@ -56,8 +61,8 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
         <label>Notes<textarea name="notes" rows={3} maxLength={1000} placeholder="Any details you want to remember"/></label>
       </>}
       {error && <p role="alert" className="form-error">{error}</p>}
-      <p className="form-hint">Saved in this browser. Shared team storage is not connected yet.</p>
-      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary">{isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
+      <p className="form-hint">{API_BASE ? 'Saved to the shared backend.' : 'Saved in this browser. Shared team storage is not connected yet.'}</p>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
     </form>
   </dialog>;
 }
@@ -105,9 +110,10 @@ function Assistant({equipment}) {
 }
 
 export default function App() {
-  const [initial] = useState(() => loadState(storage));
+  const [initial] = useState(() => API_BASE ? {data: EMPTY, warning: ''} : loadState(storage));
   const [data, setData] = useState(initial.data);
   const [storageWarning, setStorageWarning] = useState(initial.warning);
+  const [loading, setLoading] = useState(Boolean(API_BASE));
   const [today, setToday] = useState(localDate());
   const [view, setView] = useState('Overview');
   const [query, setQuery] = useState('');
@@ -115,7 +121,16 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [modal, setModal] = useState('');
   const [announcement, setAnnouncement] = useState('');
-  useEffect(() => {const warning = saveState(storage, data); if (warning) setStorageWarning(warning);}, [data]);
+  useEffect(() => {
+    if (API_BASE) return;
+    const warning = saveState(storage, data); if (warning) setStorageWarning(warning);
+  }, [data]);
+  async function refresh() {
+    try {setData(await loadWorkspace(API_BASE)); setStorageWarning('');}
+    catch (issue) {setStorageWarning(`Could not load data from the backend: ${issue.message}`);}
+    finally {setLoading(false);}
+  }
+  useEffect(() => {if (API_BASE) refresh();}, []);
   useEffect(() => {
     const refresh = () => setToday(localDate());
     const interval = setInterval(refresh, 60000);
@@ -132,9 +147,19 @@ export default function App() {
   const selected = equipmentById.get(selectedId);
   const dateLabel = new Date(`${today}T12:00:00`).toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
   function navigate(next) {setView(next); setSelectedId(''); setQuery(''); setFilter('open');}
-  function complete(task) {
-    setData(previous => toggleTask(previous, task.id, today));
+  async function complete(task) {
+    if (API_BASE) {
+      try {await completeTask(API_BASE, task); await refresh();}
+      catch (issue) {setStorageWarning(issue.message); return;}
+    } else setData(previous => toggleTask(previous, task.id, today));
     setAnnouncement(`${task.title}: ${task.completed_at ? 'reopened' : 'completed'}.`);
+  }
+  async function save(item) {
+    if (API_BASE) {
+      await (modal === 'equipment' ? addEquipment(API_BASE, item) : addTask(API_BASE, item));
+      await refresh();
+    } else setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]});
+    setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);
   }
   function reset() {
     if (window.confirm('Replace your equipment and tasks with fresh sample data? This clears changes saved in this browser.')) {
@@ -152,7 +177,9 @@ export default function App() {
     <main>
       <div className="topline"><span className="breadcrumb">My workspace <span>/</span> {view}</span><span className="today">{dateLabel}</span></div>
       <header className="page-header"><div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div><button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button></header>
-      <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>
+      {API_BASE
+        ? <div className="demo-banner"><span className="demo-dot"/><p><strong>{loading ? 'Loading from the backend…' : 'Connected to the backend.'}</strong> Equipment, tasks and reminders are shared and powered by Gemma.</p><button onClick={() => {setLoading(true); refresh();}}>Refresh</button></div>
+        : <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>}
       {storageWarning && <div className="storage-warning" role="alert">{storageWarning}<button className="icon-button" onClick={() => setStorageWarning('')} aria-label="Dismiss storage notice"><Icon name="close" size={16}/></button></div>}
       <section className="stats" aria-label="Maintenance summary">{[
         {label: 'Equipment tracked', value: data.equipment.length, detail: 'All in one place', icon: 'box', action: () => navigate('Equipment')},
@@ -180,6 +207,6 @@ export default function App() {
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>
-    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={item => {setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]}); setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);}}/>}
+    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
   </div>;
 }
