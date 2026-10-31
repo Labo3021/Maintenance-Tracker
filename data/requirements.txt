@@ -1,0 +1,2 @@
+# Only data/scripts/fetch_images.py needs this; the other scripts use the standard library.
+Pillow>=10.0
