@@ -46,5 +46,15 @@ class Settings:
         # ~4 chars/token, so 400k chars is roughly 100k tokens of manual text.
         self.max_manual_chars = int(os.getenv("MAX_MANUAL_CHARS", "400000"))
 
+        # Reminders: notify this many days before a task is due (overdue tasks always count).
+        self.remind_days_before = int(os.getenv("REMIND_DAYS_BEFORE", "3"))
+        # Hour of day (local) calendar alarms fire.
+        self.reminder_hour = int(os.getenv("REMINDER_HOUR", "9"))
+
+        # Manual finder. Searching sends only brand + model text, never photos.
+        # "none" = only save a search link; "brave" = Brave Search API (needs BRAVE_API_KEY).
+        self.search_provider = os.getenv("SEARCH_PROVIDER", "none").strip().lower()
+        self.brave_api_key = os.getenv("BRAVE_API_KEY", "").strip()
+
 
 settings = Settings()
