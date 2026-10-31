@@ -1,0 +1,106 @@
+/* Soft isometric detail and restrained surface depth. */
+.page-header {
+  box-shadow: inset 0 1px 0 #ffffffd9, 0 2px 2px #6387ac14, 0 18px 40px #446f9c1b;
+}
+.page-header > div:first-child, .page-header > .button { position: relative; z-index: 2; }
+.hero-cube {
+  position: absolute;
+  z-index: 1;
+  width: 132px;
+  height: 152px;
+  right: clamp(170px, 20%, 260px);
+  top: 27px;
+  transform: rotate(-9deg);
+  filter: drop-shadow(12px 20px 13px #396ca137);
+  pointer-events: none;
+}
+.hero-cube span { position: absolute; inset: 0; }
+.cube-top {
+  clip-path: polygon(50% 0, 100% 25%, 50% 50%, 0 25%);
+  background: linear-gradient(145deg, #fff, #d5e7ff 63%, #b8d3fb);
+}
+.cube-left {
+  clip-path: polygon(0 25%, 50% 50%, 50% 100%, 0 75%);
+  background: linear-gradient(155deg, #9dd6ff, #5e9df2 75%);
+}
+.cube-right {
+  clip-path: polygon(50% 50%, 100% 25%, 100% 75%, 50% 100%);
+  background: linear-gradient(135deg, #96b2fb, #667fe0 80%);
+}
+.brand-mark {
+  box-shadow: inset 0 1px 1px #ffffff9e, inset 0 -3px 7px #123fa35e,
+    0 3px 0 #3354b2, 0 11px 19px #2858bf3d;
+}
+.panel {
+  box-shadow: inset 0 1px 0 #fff, 0 1px 1px #526a8512,
+    0 8px 20px #3e618e10, 0 20px 34px #3e618e08;
+}
+.stat, .equipment-card { transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.stat:hover, .equipment-card:hover {
+  transform: perspective(950px) rotateX(2deg) translateY(-5px);
+  box-shadow: inset 0 1px 0 #fff, 0 3px 0 #d9e5f3,
+    0 15px 24px #2e5b941e, 0 25px 46px #2e5b940e;
+}
+.stat:active, .equipment-card:active { transform: translateY(1px); }
+.stat-icon, .assistant-symbol {
+  box-shadow: inset 0 2px 1px #ffffffc9, inset 0 -2px 3px #7890c521,
+    0 3px 0 #c9d9ee, 0 8px 12px #376eaa18;
+}
+.equipment-art {
+  box-shadow: inset 0 3px 10px #ffffffc2, inset 0 -9px 18px #51728d12;
+}
+.equipment-art > svg {
+  filter: drop-shadow(2px 8px 5px #31567a26);
+  transition: transform .22s ease, filter .22s ease;
+}
+.equipment-card:hover .equipment-art > svg {
+  transform: translateY(-3px);
+  filter: drop-shadow(4px 13px 7px #31567a31);
+}
+.category, .small-status, .status, .count {
+  box-shadow: inset 0 1px 0 #ffffffb8, 0 2px 5px #38546d12;
+}
+.button.primary {
+  background: linear-gradient(150deg, #3b91ff, #1667e8 70%, #1155c8);
+  box-shadow: inset 0 1px 1px #ffffff8c, inset 0 -2px 4px #07439d66,
+    0 3px 0 #104cae, 0 10px 16px #1769e83b;
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.button.primary:hover:not(:disabled) {
+  background: linear-gradient(150deg, #50a0ff, #176ce8 70%, #1158cc);
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 1px #ffffff8c, inset 0 -2px 4px #07439d66,
+    0 5px 0 #104cae, 0 15px 22px #1769e842;
+}
+.button.primary:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 2px 5px #06439d77, 0 2px 5px #1769e82a; }
+.button.primary:disabled { box-shadow: inset 0 1px 1px #ffffff59, 0 2px 4px #456a9220; }
+.task-panel { overflow: hidden; }
+.task-row { transition: background .18s ease; }
+.task-row:hover { background: #f9fbff; }
+.task-check { box-shadow: inset 0 2px 3px #42658c18, 0 1px 0 #fff; }
+.assistant {
+  box-shadow: inset 0 1px 0 #fff, 0 2px 0 #dbe6f7,
+    0 14px 32px #4b65a51b;
+}
+.chat-log, .photo-preview, .photo-button, .modal {
+  box-shadow: inset 0 1px 0 #fff, 0 3px 9px #49639c11;
+}
+.chat-message { box-shadow: 0 2px 6px #41618a15; }
+.photo-button:hover { transform: translateY(-1px); box-shadow: inset 0 1px 0 #fff, 0 5px 10px #49639c1c; }
+
+@media(max-width: 1200px) {
+  .hero-cube { width: 105px; height: 122px; right: 150px; top: 45px; opacity: .78; }
+}
+@media(max-width: 760px) {
+  .hero-cube { width: 84px; height: 98px; right: 24px; top: 16px; opacity: .35; }
+  .page-header > div:first-child { max-width: 100%; }
+}
+@media(max-width: 410px) {
+  .hero-cube { width: 70px; height: 80px; right: 14px; opacity: .27; }
+}
+@media(prefers-reduced-motion: reduce) {
+  .stat, .equipment-card, .equipment-art > svg, .button.primary { transition: none; }
+  .stat:hover, .equipment-card:hover, .stat:active, .equipment-card:active,
+  .equipment-card:hover .equipment-art > svg, .button.primary:hover:not(:disabled),
+  .button.primary:active:not(:disabled), .photo-button:hover { transform: none; }
+}

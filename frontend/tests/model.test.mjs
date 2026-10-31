@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
+import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
 import {askAssistant} from '../src/api.mjs';
 
 const today = '2026-10-31';
@@ -29,6 +29,28 @@ test('completing and reopening a task preserves original state', () => {
   assert.equal(selectTasks(changed, {filter: 'completed', today}).length, 2);
 });
 
+test('recurring completion keeps history and schedules the next future occurrence', () => {
+  assert.equal(nextRecurringDate('2026-01-31', 'monthly', '2026-02-28'), '2026-03-31');
+  assert.equal(nextRecurringDate('2024-02-29', 'quarterly', '2024-05-29'), '2024-08-29');
+  assert.equal(nextRecurringDate('2026-10-01', 'weekly', today), '2026-11-05');
+  const original = demoData(today);
+  const changed = toggleTask(original, 'task-002', today, () => 'task-next');
+  assert.ok(validateState(changed));
+  assert.equal(changed.tasks.find(task => task.id === 'task-002').completed_at, today);
+  assert.equal(changed.tasks.find(task => task.id === 'task-next').due_date, '2026-11-30');
+  assert.equal(selectTasks(changed, {filter: 'completed', today}).length, 2);
+  assert.equal(selectTasks(changed, {filter: 'open', today}).length, 3);
+  assert.deepEqual(toggleTask(changed, 'task-002', today).tasks, original.tasks);
+  const later = toggleTask(changed, 'task-next', '2026-11-30', () => 'task-after');
+  assert.equal(canReopenTask(later, 'task-002'), false);
+  assert.equal(toggleTask(later, 'task-002', today), later);
+  const january = createTask({title: 'Check filter', equipment_id: original.equipment[0].id, due_date: '2026-01-31', recurrence: 'monthly'}, original.equipment, 'jan');
+  const february = toggleTask({...original, tasks: [...original.tasks, january]}, 'jan', '2026-01-31', () => 'feb').tasks.at(-1);
+  assert.equal(february.due_date, '2026-02-28');
+  const march = toggleTask({...original, tasks: [january, february]}, 'feb', '2026-02-28', () => 'mar').tasks.at(-1);
+  assert.equal(march.due_date, '2026-03-31');
+});
+
 test('search and task filters compose with equipment selection', () => {
   const data = demoData(today);
   assert.deepEqual(selectTasks(data, {filter: 'open', today}).map(task => task.id), ['task-001', 'task-002', 'task-003']);
@@ -44,10 +66,12 @@ test('new equipment and tasks use stable IDs and validate user input', () => {
   const task = createTask({title: ' Find manual ', equipment_id: item.id, due_date: today}, [item], 'new-task');
   assert.equal(task.title, 'Find manual');
   assert.equal(task.completed_at, null);
+  assert.equal(task.recurrence, 'none');
   assert.ok(validateState({schema_version: 1, equipment: [item], tasks: [task]}));
   assert.throws(() => createEquipment({name: ' ', category: 'tool'}, today, 'bad'), /equipment name/);
   assert.throws(() => createTask({title: 'Task', equipment_id: 'missing', due_date: today}, [item], 'bad'), /existing equipment/);
   assert.throws(() => createTask({title: 'Task', equipment_id: item.id, due_date: '2026-02-30'}, [item], 'bad'), /valid due date/);
+  assert.throws(() => createTask({title: 'Task', equipment_id: item.id, due_date: today, recurrence: 'daily'}, [item], 'bad'), /reminder schedule/);
 });
 
 test('saved state survives a round trip', () => {
@@ -98,4 +122,17 @@ test('AI adapter handles disconnected, failed, malformed, and aborted requests',
   await assert.rejects(askAssistant('/api', 'eq-001', 'Question', {request: async () => ({ok: true, json: async () => ({answer: 42})})}), /unexpected response/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(askAssistant('/api', 'eq-001', 'Question', {signal: controller.signal, request: async (_url, options) => {options.signal.throwIfAborted();}}), {name: 'AbortError'});
+});
+
+test('photo diagnosis sends multipart data without setting Content-Type', async () => {
+  const image = new File(['photo'], 'fan.png', {type: 'image/png'});
+  let captured;
+  await askAssistant('/api', 'eq-003', 'Does this look damaged?', {
+    image,
+    request: async (_url, options) => {captured = options; return {ok: true, json: async () => ({answer: 'Check the manual.'})};}
+  });
+  assert.equal(captured.headers, undefined);
+  assert.equal(captured.body.get('equipment_id'), 'eq-003');
+  assert.equal(captured.body.get('message'), 'Does this look damaged?');
+  assert.equal(captured.body.get('image').name, 'fan.png');
 });

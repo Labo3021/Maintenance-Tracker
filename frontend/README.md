@@ -33,10 +33,16 @@ npm run preview
 - Equipment search, task search, task status filters, and equipment selection.
 - Add equipment and tasks with validated input and native keyboard-accessible dialogs.
 - Complete and reopen tasks; counts and history update immediately.
+- Optional weekly, monthly, or quarterly reminders. Completing one keeps its
+  history and creates the next due occurrence. Reopening it removes the next
+  open occurrence; older history stays locked once a later occurrence is done.
 - Browser localStorage persistence, with a visible warning if storage fails.
 - Responsive layouts and reduced-motion support.
-- A pending AI panel with an optional backend adapter, loading/error states,
-  cancellation, and a 30-second timeout.
+- Photo upload and mobile camera controls with a local JPG/PNG/WebP preview
+  (10 MB limit), plus a diagnostic chat transcript. Photos and messages are
+  session-only and are not saved in localStorage.
+- A pending AI adapter with loading/error states, cancellation, and a 30-second
+  timeout. The send button stays disabled until a backend URL is configured.
 
 Sample reminders are relative to the first visit, not manufacturer schedules.
 Saved records keep their dates on subsequent visits. All task dates use the
@@ -63,6 +69,10 @@ Content-Type: application/json
 The backend must know the same equipment IDs. For user-created equipment,
 implement equipment/task synchronization before using those IDs with the AI.
 Treat this endpoint as a proposal; change `src/api.mjs` to match the agreed API.
+For a question with a photo, the proposed route accepts `multipart/form-data`
+with text fields `equipment_id` and `message`, and a file field named `image`.
+Text-only requests keep the JSON shape above. Confirm the image field name,
+size limit, and response shape with Person 2 before connecting the backend.
 
 To configure an available backend, copy `.env.example` to `.env` and set:
 
@@ -86,11 +96,17 @@ backend. Every `VITE_` value is public: never put an API key there.
 7. Use a phone-width window: navigation, forms, and cards remain usable.
 8. Use Tab, Enter, and Escape: open a dialog, submit it, or close it.
 9. With no backend configured, confirm the panel says AI connection pending.
+10. Choose Upload photo, inspect the preview, and remove it. On a phone, try
+    Take photo. No image is transmitted while the backend is pending.
+11. Add a weekly recurring task and complete it: History retains the finished
+    item and Maintenance shows the next due date. Refresh to confirm both stay.
 
 ## Your first frontend edit
 
 Change the heading `Keep good things going.` in `src/App.jsx`, save, and watch
-Vite refresh the browser. Change the `--green` color in `src/styles.css` next.
+Vite refresh the browser. Change the theme colors in `src/vivid.css` next.
+`styles.css` holds the base layout; `vivid.css` adds the brighter product theme;
+`depth.css` adds the soft isometric cube and raised surface details.
 `App.jsx` owns screens and interactions; `model.mjs` owns data behavior;
 `api.mjs` is the single place to adapt the AI request.
 
@@ -99,8 +115,8 @@ Vite refresh the browser. Change the `--green` color in `src/styles.css` next.
 Verified on Windows with Node.js 22.14.0 and npm 10.9.2:
 
 - `npm install` completed and generated `package-lock.json`.
-- `npm test` passed all 10 model/API tests.
+- `npm test` passed all 12 model/API tests after the role update.
 - `npm run build` completed successfully with Vite 7.3.7.
 
-Browser interactions have not been manually verified. Use the UI acceptance
-check above before merging.
+The original task completion and History flow were manually checked. Use the
+remaining UI acceptance steps above before merging.

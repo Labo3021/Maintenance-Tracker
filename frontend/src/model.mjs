@@ -9,6 +9,26 @@ export function shiftDate(iso, days) {
   return localDate(new Date(year, month - 1, day + days, 12));
 }
 
+export const RECURRENCES = ['none', 'weekly', 'monthly', 'quarterly'];
+
+export function nextRecurringDate(dueDate, recurrence, today = localDate()) {
+  if (!RECURRENCES.includes(recurrence) || recurrence === 'none') return null;
+  let next = dueDate;
+  let occurrence = 0;
+  do {
+    occurrence += 1;
+    if (recurrence === 'weekly') next = shiftDate(dueDate, 7 * occurrence);
+    else {
+      const [year, month, day] = dueDate.split('-').map(Number);
+      const months = (recurrence === 'monthly' ? 1 : 3) * occurrence;
+      const target = new Date(year, month - 1 + months, 1, 12);
+      const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+      next = localDate(new Date(target.getFullYear(), target.getMonth(), Math.min(day, lastDay), 12));
+    }
+  } while (next <= today);
+  return next;
+}
+
 export function validDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T12:00:00Z`);
@@ -32,7 +52,7 @@ export function demoData(today = localDate()) {
     ],
     tasks: [
       {id: 'task-001', equipment_id: 'eq-001', title: 'Review filter condition', due_date: shiftDate(today, -6), completed_at: null, notes: 'Fictional reminder. Follow the actual product manual for maintenance.'},
-      {id: 'task-002', equipment_id: 'eq-002', title: 'Review maintenance log', due_date: today, completed_at: null, notes: 'Fictional reminder; no repair procedure is implied.'},
+      {id: 'task-002', equipment_id: 'eq-002', title: 'Review maintenance log', due_date: today, completed_at: null, recurrence: 'monthly', recurrence_anchor: today, notes: 'Fictional reminder; no repair procedure is implied.'},
       {id: 'task-003', equipment_id: 'eq-003', title: 'Find the product manual', due_date: shiftDate(today, 7), completed_at: null, notes: 'Look up the manual for the exact product model.'},
       {id: 'task-004', equipment_id: 'eq-001', title: 'Record product model', due_date: shiftDate(today, -12), completed_at: shiftDate(today, -12), notes: 'Fictional example for maintenance history.'}
     ]
@@ -56,8 +76,12 @@ export function validateState(data) {
     if (!task || !nonempty(task.id) || taskIds.has(task.id) || !ids.has(task.equipment_id)) return false;
     if (!nonempty(task.title) || typeof task.notes !== 'string' || !validDate(task.due_date)) return false;
     if (task.completed_at !== null && !validDate(task.completed_at)) return false;
+    if (task.recurrence !== undefined && !RECURRENCES.includes(task.recurrence)) return false;
+    if (task.recurrence_anchor !== undefined && !validDate(task.recurrence_anchor)) return false;
+    if (task.source_task_id !== undefined && !nonempty(task.source_task_id)) return false;
     taskIds.add(task.id);
   }
+  for (const task of data.tasks) if (task.source_task_id && !taskIds.has(task.source_task_id)) return false;
   return true;
 }
 
@@ -78,9 +102,23 @@ export function saveState(storage, data) {
   catch { return 'Browser storage is unavailable. Your changes will last for this session only.'; }
 }
 
-export function toggleTask(data, id, today = localDate()) {
-  return {...data, tasks: data.tasks.map(task => task.id === id
-    ? {...task, completed_at: task.completed_at ? null : today} : task)};
+export function canReopenTask(data, id) {
+  const successor = data.tasks.find(task => task.source_task_id === id);
+  return !successor || !successor.completed_at;
+}
+
+export function toggleTask(data, id, today = localDate(), makeId = () => crypto.randomUUID()) {
+  const selected = data.tasks.find(task => task.id === id);
+  if (!selected) return data;
+  if (selected.completed_at) {
+    if (!canReopenTask(data, id)) return data;
+    return {...data, tasks: data.tasks.filter(task => task.source_task_id !== id)
+      .map(task => task.id === id ? {...task, completed_at: null} : task)};
+  }
+  const tasks = data.tasks.map(task => task.id === id ? {...task, completed_at: today} : task);
+  const nextDate = nextRecurringDate(selected.recurrence_anchor ?? selected.due_date, selected.recurrence ?? 'none', today);
+  if (nextDate) tasks.push({...selected, id: makeId(), due_date: nextDate, completed_at: null, source_task_id: selected.id});
+  return {...data, tasks};
 }
 
 export function selectTasks(data, {query = '', filter = 'all', equipmentId = '', today = localDate()} = {}) {
@@ -109,5 +147,7 @@ export function createTask(fields, equipment, id = crypto.randomUUID()) {
   const title = fields.title?.trim();
   if (!title || title.length > 140) throw new Error('Enter a task title (1–140 characters).');
   if (!validDate(fields.due_date)) throw new Error('Enter a valid due date.');
-  return {id, equipment_id: fields.equipment_id, title, due_date: fields.due_date, completed_at: null, notes: fields.notes?.trim() ?? ''};
+  const recurrence = fields.recurrence || 'none';
+  if (!RECURRENCES.includes(recurrence)) throw new Error('Choose a reminder schedule.');
+  return {id, equipment_id: fields.equipment_id, title, due_date: fields.due_date, completed_at: null, recurrence, ...(recurrence === 'none' ? {} : {recurrence_anchor: fields.due_date}), notes: fields.notes?.trim() ?? ''};
 }
