@@ -18,7 +18,9 @@ const paths = {
   sparkle: 'm12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z',
   close: 'm6 6 12 12 M6 18 18 6',
   pin: 'M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0 M14 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
-  undo: 'M4 10h10a6 6 0 0 1 0 12 M4 10l5-5 M4 10l5 5'
+  undo: 'M4 10h10a6 6 0 0 1 0 12 M4 10l5-5 M4 10l5 5',
+  camera: 'M4 7h3l2-3h6l2 3h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  image: 'M3 4h18v16H3z M8 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2z M3 17l5-5 4 4 3-3 6 6'
 };
 function Icon({name, size = 20}) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] || paths.box}/></svg>;
@@ -58,6 +60,7 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
       </> : <>
         <label>Task title<input autoFocus name="title" required maxLength={140} placeholder="e.g. Check the product manual"/></label>
         <div className="form-grid"><label>Equipment<select name="equipment_id" defaultValue={selectedId || equipment[0]?.id} required>{equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Due date<input type="date" name="due_date" required defaultValue={localDate()}/></label></div>
+        <label>Repeat reminder<select name="recurrence" defaultValue="none"><option value="none">One time</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Every 3 months</option></select></label>
         <label>Notes<textarea name="notes" rows={3} maxLength={1000} placeholder="Any details you want to remember"/></label>
       </>}
       {error && <p role="alert" className="form-error">{error}</p>}
@@ -70,26 +73,53 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
 function Assistant({equipment}) {
   const [equipmentId, setEquipmentId] = useState(equipment[0]?.id || '');
   const [message, setMessage] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [photo, setPhoto] = useState(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const controller = useRef(null);
+  const photoUrls = useRef(new Set());
+  useEffect(() => () => { for (const url of photoUrls.current) URL.revokeObjectURL(url); }, []);
   useEffect(() => {
     if (!equipment.some(item => item.id === equipmentId)) setEquipmentId(equipment[0]?.id || '');
   }, [equipment, equipmentId]);
   useEffect(() => {
-    controller.current?.abort(); controller.current = null; setAnswer(''); setError(''); setPending(false);
+    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false);
     return () => controller.current?.abort();
   }, [equipmentId]);
+  function attachPhoto(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      setError('Choose a JPG, PNG, or WebP photo under 10 MB.');
+      return;
+    }
+    if (photo && !messages.some(entry => entry.photoUrl === photo.url)) {
+      URL.revokeObjectURL(photo.url); photoUrls.current.delete(photo.url);
+    }
+    const url = URL.createObjectURL(file);
+    photoUrls.current.add(url);
+    setPhoto({file, url}); setError('');
+  }
+  function removePhoto() {
+    if (photo && !messages.some(entry => entry.photoUrl === photo.url)) {
+      URL.revokeObjectURL(photo.url); photoUrls.current.delete(photo.url);
+    }
+    setPhoto(null);
+  }
   async function submit(event) {
     event.preventDefault();
-    if (pending || !API_BASE || !message.trim() || !equipmentId) return;
+    if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
     const active = new AbortController(); controller.current = active;
     const timeout = setTimeout(() => active.abort(), 30000);
-    setPending(true); setError(''); setAnswer('');
+    const sentMessage = message.trim() || 'What should I check in this photo?';
+    const sentPhoto = photo;
+    setMessages(previous => [...previous, {role: 'user', text: sentMessage, photoUrl: sentPhoto?.url}]);
+    setMessage(''); setPhoto(null); setPending(true); setError('');
     try {
-      const response = await askAssistant(API_BASE, equipmentId, message.trim(), {signal: active.signal});
-      if (controller.current === active && !active.signal.aborted) setAnswer(response);
+      const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
+      if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
     }
     catch (issue) {if (controller.current === active) setError(issue.name === 'AbortError' ? 'The request timed out. Please try again.' : issue.message);}
     finally {clearTimeout(timeout); if (controller.current === active) setPending(false);}
@@ -97,15 +127,22 @@ function Assistant({equipment}) {
   return <aside className="assistant panel" aria-labelledby="assistant-title">
     <div className="assistant-symbol"><Icon name="sparkle" size={25}/></div>
     <p className="eyebrow">A LITTLE HELP, WHEN YOU NEED IT</p><h2 id="assistant-title">Care made clearer.</h2>
-    <p className="assistant-copy">Have a question about your equipment? Your maintenance assistant will help you find the next step.</p>
+    <p className="assistant-copy">Share a photo and describe what you notice. Your maintenance assistant can help you find the next step.</p>
     <span className={`connection ${API_BASE ? 'ready' : ''}`}><span/>{API_BASE ? 'Backend configured' : 'AI connection pending'}</span>
+    <div className="chat-log" role="log" aria-label="Diagnostic conversation" aria-live="polite">
+      {messages.length ? messages.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}><strong>{entry.role === 'user' ? 'You' : 'Maintenance assistant'}</strong>{entry.photoUrl && <img src={entry.photoUrl} alt="Photo attached to your question"/>}{entry.text && <p>{entry.text}</p>}</div>)
+        : <p className="chat-empty">Your diagnostic conversation will appear here. A photo is optional.</p>}
+      {pending && <p className="chat-pending">Thinking about your question...</p>}
+    </div>
     <form onSubmit={submit}>
       <label>Equipment<select value={equipmentId} onChange={event => setEquipmentId(event.target.value)} disabled={!equipment.length}>{equipment.length ? equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">Add equipment first</option>}</select></label>
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
-      <button type="submit" className="button primary full" disabled={!API_BASE || pending || !message.trim() || !equipmentId}>{pending ? 'Asking assistant…' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
+      {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
+      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
     </form>
-    {!API_BASE && <p className="form-hint">Your question stays here until the AI service is connected.</p>}
-    <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{answer && <div className="answer"><strong>Assistant response</strong><p>{answer}</p><small>AI suggestions may be inaccurate. Check the actual product manual.</small></div>}</div>
+    {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
+    <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
   </aside>;
 }
 
@@ -199,7 +236,8 @@ export default function App() {
           const status = taskStatus(task, today);
           const item = equipmentById.get(task.equipment_id);
           const due = new Date(`${task.due_date}T12:00:00`).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
-          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
+          const locked = Boolean(task.completed_at) && !canReopenTask(data, task.id);
+          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'A later occurrence is already complete' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>

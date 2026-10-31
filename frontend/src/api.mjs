@@ -24,8 +24,8 @@ export async function askAssistant(baseUrl, equipmentId, message, {signal, reque
   if (!baseUrl) throw new Error('The AI assistant is not connected yet.');
   const response = await request(endpoint(baseUrl, '/assistant'), {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({equipment_id: equipmentId, message}),
+    ...(image ? {} : {headers: {'Content-Type': 'application/json'}}),
+    body,
     signal
   });
   if (!response.ok) throw new Error(`The assistant could not respond (${response.status}). Please try again.`);
