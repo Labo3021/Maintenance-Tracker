@@ -1,4 +1,4 @@
-# LabGuard AI — Smart Lab Equipment & Inventory Maintenance
+# Maintenance Tracker
 
 > An open-source, privacy-first laboratory equipment maintenance tutor and inventory scheduler powered by **Gemma 4**.
 
