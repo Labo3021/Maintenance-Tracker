@@ -6,11 +6,12 @@ All writes go to storage/inventory.json so data/ is never modified.
 """
 
 import json
+import re
 import threading
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from config import BACKEND_DIR, settings
 
@@ -66,9 +67,12 @@ class MatchIndex:
 
 
 class InventoryStore:
-    def __init__(self, path: Path, seed_paths: list[Path]) -> None:
+    def __init__(self, path: Path, seeds: list[tuple[Path, dict]]) -> None:
+        """seeds: (json file, defaults for fields the file leaves out). All existing files are
+        loaded on first run; after that the saved inventory is the only source."""
         self.path = path
-        self.seed_paths = seed_paths
+        self.seeds = seeds
+        self.fresh = False  # True when this run started from the seeds (no saved inventory)
         # Writers never mutate a stored Asset in place: they build a new one and swap it in,
         # so a reader holding a snapshot (or a response being serialized) never sees a half-done change.
         self._lock = threading.RLock()
@@ -78,17 +82,24 @@ class InventoryStore:
     # --- persistence ---
 
     def _load(self) -> None:
-        source = self.path if self.path.exists() else next((p for p in self.seed_paths if p.exists()), None)
-        if source is None:
-            return
-        raw = json.loads(source.read_text(encoding="utf-8"))
-        items = raw.get("assets", raw) if isinstance(raw, dict) else raw
-        for item in items:
-            item.setdefault("id", _new_id("asset"))
-            asset = Asset.model_validate(item)
-            sync_tasks(asset)
-            self._assets[asset.id] = asset
-        self._save()
+        if self.path.exists():
+            sources = [(self.path, {})]
+        else:
+            sources = [(p, d) for p, d in self.seeds if p.exists()]
+            self.fresh = True
+        for source, defaults in sources:
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            items = raw.get("assets", raw) if isinstance(raw, dict) else raw
+            for item in items:
+                item = defaults | item
+                item.setdefault("id", _new_id("asset"))
+                if item["id"] in self._assets:
+                    continue  # first source wins on an ID clash
+                asset = Asset.model_validate(item)
+                sync_tasks(asset)
+                self._assets[asset.id] = asset
+        if sources:
+            self._save()
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +198,25 @@ class InventoryStore:
             self._assets[asset_id] = asset
             self._save()
             return asset
+
+    def attach_photos_by_code(
+        self, files: Iterable[tuple[str, int, Callable[[], bytes]]], max_bytes: int
+    ) -> tuple[int, list[str]]:
+        """files: (file name, size, read function). Each image whose name (without extension) matches an
+        asset code is attached; '03065-20.jpg' matches code '03065.20'. A .jpg beats other formats for the
+        same code. Returns (matched assets, unmatched file names)."""
+        key = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+        by_code = {key(a.code): a.id for a in self._snapshot() if a.code}
+        done: set[str] = set()
+        unmatched: list[str] = []
+        for name, size, read in sorted(files, key=lambda f: (Path(f[0]).suffix.lower() != ".jpg", f[0])):
+            asset_id = by_code.get(key(Path(name).stem))
+            if asset_id is None:
+                unmatched.append(name)
+            elif asset_id not in done and size <= max_bytes:
+                self.set_photo(asset_id, read(), Path(name).suffix.lower())
+                done.add(asset_id)
+        return len(done), unmatched
 
     def photo_path(self, asset_id: str) -> Optional[Path]:
         asset = self._assets.get(asset_id)
@@ -374,5 +404,8 @@ class InventoryStore:
 
 store = InventoryStore(
     path=settings.storage_dir / "inventory.json",
-    seed_paths=[settings.data_dir / "mock_inventory.json", BACKEND_DIR / "seed" / "mock_inventory.json"],
+    seeds=[
+        (BACKEND_DIR / "seed" / "mock_inventory.json", {"environment": "lab"}),        # demo lab instruments
+        (settings.data_dir / "mock_inventory.json", {"environment": "household"}),     # data/: household tasks
+    ],
 )

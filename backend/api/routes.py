@@ -1,7 +1,6 @@
 """REST routes. Handlers are plain `def` so FastAPI runs slow model calls in a threadpool."""
 
 import io
-import re
 import zipfile
 from pathlib import PurePosixPath
 from typing import Literal, Optional
@@ -113,11 +112,6 @@ def _read_image(image: UploadFile) -> bytes:
     return data
 
 
-def _code_key(text: str) -> str:
-    """'03065-20', '03065.20' and '03065_20' all match the same code."""
-    return re.sub(r"[^a-z0-9]", "", text.lower())
-
-
 @router.post("/assets/photos/import", response_model=PhotoImportResult, tags=["assets"])
 def import_photos(file: UploadFile = File(..., description="ZIP of images named by asset code, e.g. 02001.00.jpg")):
     """Attach photos in bulk: each image's file name (without extension) is matched to an asset's code.
@@ -130,24 +124,15 @@ def import_photos(file: UploadFile = File(..., description="ZIP of images named 
     except zipfile.BadZipFile as e:
         raise HTTPException(422, "Upload a .zip file of images") from e
 
-    by_code = {_code_key(a.code): a.id for a in store.list_assets() if a.code}
-    done: set[str] = set()
-    unmatched: list[str] = []
-    for info in sorted(archive.infolist(), key=lambda i: (PurePosixPath(i.filename).suffix.lower() != ".jpg", i.filename)):
-        path = PurePosixPath(info.filename)
-        ext = path.suffix.lower()
-        if info.is_dir() or ext not in IMAGE_EXTS or path.name.startswith("."):
-            continue
-        asset_id = by_code.get(_code_key(path.stem))
-        if asset_id is None:
-            unmatched.append(path.name)
-            continue
-        if asset_id in done or info.file_size > settings.max_image_bytes:
-            continue
-        store.set_photo(asset_id, archive.read(info), ext)
-        done.add(asset_id)
+    files = [
+        (PurePosixPath(i.filename).name, i.file_size, lambda i=i: archive.read(i))
+        for i in archive.infolist()
+        if not i.is_dir() and PurePosixPath(i.filename).suffix.lower() in IMAGE_EXTS
+        and not PurePosixPath(i.filename).name.startswith(".")
+    ]
+    matched, unmatched = store.attach_photos_by_code(files, settings.max_image_bytes)
     return PhotoImportResult(
-        matched=len(done),
+        matched=matched,
         unmatched_files=unmatched,
         assets_without_photo=sum(1 for a in store.list_assets() if not a.photo),
     )

@@ -27,3 +27,6 @@ models/
 Thumbs.db
 .vscode/
 .idea/
+
+# Private demo data (e.g. a real institution inventory): never commit
+data/private/

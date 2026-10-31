@@ -18,6 +18,7 @@ ResultSource = Literal["model", "mock", "fallback"]
 # Length limits keep one bad request or import row from bloating the data file.
 ShortText = Annotated[str, StringConstraints(max_length=200)]
 LongText = Annotated[str, StringConstraints(max_length=5000)]
+UrlText = Annotated[str, StringConstraints(max_length=2000)]
 Environment = Literal["lab", "household", "enterprise"]
 ScheduleKind = Literal["inspect", "clean", "replace", "service", "calibrate"]
 TaskKind = Literal["service", "calibration", "part", "schedule", "stock", "task"]
@@ -126,6 +127,17 @@ class AssetBase(BaseModel):
     groups: list[ShortText] = Field(default=[], description="Kits, sets or groups this item belongs to")
     notes: LongText = ""
     photo: Optional[str] = Field(default=None, description="Stored photo file name; fetch via photo_url")
+    # How-to details (from data/items.json): shown in the UI and given to the assistant.
+    severity: Optional[Severity] = Field(default=None, description="How much skipping its maintenance matters")
+    difficulty: Optional[ShortText] = Field(default=None, description="e.g. easy, medium, hard")
+    estimated_minutes: Optional[int] = Field(default=None, ge=1)
+    tools_needed: list[ShortText] = []
+    repair_steps: list[LongText] = []
+    video_url: Optional[UrlText] = None
+    purchase_url: Optional[UrlText] = None
+    image_url: Optional[UrlText] = Field(
+        default=None, description="Stock image path on this server, e.g. /demo_assets/parts/task_202.jpg"
+    )
 
 
 class AssetCreate(AssetBase):
@@ -156,6 +168,14 @@ class AssetUpdate(BaseModel):
     quantity_actual: Optional[int] = Field(default=None, ge=0)
     groups: Optional[list[ShortText]] = None
     notes: Optional[LongText] = None
+    severity: Optional[Severity] = None
+    difficulty: Optional[ShortText] = None
+    estimated_minutes: Optional[int] = Field(default=None, ge=1)
+    tools_needed: Optional[list[ShortText]] = None
+    repair_steps: Optional[list[LongText]] = None
+    video_url: Optional[UrlText] = None
+    purchase_url: Optional[UrlText] = None
+    image_url: Optional[UrlText] = None
 
 
 class Asset(AssetBase):
@@ -187,7 +207,8 @@ class Asset(AssetBase):
     @computed_field
     @property
     def photo_url(self) -> Optional[str]:
-        return f"/api/assets/{self.id}/photo" if self.photo else None
+        """An uploaded photo wins; otherwise the stock image, if any."""
+        return f"/api/assets/{self.id}/photo" if self.photo else self.image_url
 
     @computed_field
     @property

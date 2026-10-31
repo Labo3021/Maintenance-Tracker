@@ -27,6 +27,12 @@ def _describe(asset: Asset) -> str:
         lines.append(f"- Stock: {asset.quantity_actual} of {asset.quantity_expected} units")
     if asset.groups:
         lines.append(f"- Part of: {', '.join(asset.groups)}")
+    if asset.difficulty or asset.estimated_minutes:
+        lines.append(f"- Usual job: {asset.difficulty or '?'} difficulty, about {asset.estimated_minutes or '?'} minutes")
+    if asset.tools_needed:
+        lines.append(f"- Tools: {', '.join(asset.tools_needed)}")
+    if asset.repair_steps:
+        lines.append("- Known procedure: " + " ".join(f"{i}) {s}" for i, s in enumerate(asset.repair_steps, 1)))
     open_tasks = [t for t in asset.tasks if t.status == "open"][:5]
     if open_tasks:
         lines.append("- Open tasks: " + "; ".join(f"{t.title} (due {t.due_date})" for t in open_tasks))

@@ -77,13 +77,19 @@ npm run dev
 Open **http://127.0.0.1:5173**. The banner should say **"Connected to the backend."**
 If it shows sample products instead, check `frontend/.env` and restart `npm run dev`.
 
-### 5. Optional: load the sample lab inventory
-The backend starts with 5 demo lab instruments. To add a spreadsheet inventory, open
-http://localhost:8000/docs → `POST /api/assets/import` → **Try it out**, attach a `.csv`
-or `.xlsx`, and run it with `dry_run=true` first to preview. Details in
-[backend/README.md](backend/README.md).
+### 5. Demo data
+On a fresh start (no `backend/storage/` folder) the backend loads every source it finds:
 
-To reset all data to the demo instruments, stop the backend and delete `backend/storage/`.
+| Source | What | In git? |
+|---|---|---|
+| `backend/seed/mock_inventory.json` | 5 lab instruments with service and calibration dates | Yes |
+| `data/mock_inventory.json` | 15 household maintenance tasks with photos, steps, tools and links | Yes |
+| `data/private/<name>/` | Your own inventories: `.xlsx`/`.csv` files plus images named by item code | **No** (gitignored) |
+
+Put private or institutional data only in `data/private/`, never elsewhere in the repo. To reload
+everything (e.g. after adding a private folder), stop the backend, delete `backend/storage/`,
+and start it again. You can also import a spreadsheet any time from http://localhost:8000/docs
+→ `POST /api/assets/import` (run with `dry_run=true` first to preview).
 
 ### Tests
 ```sh

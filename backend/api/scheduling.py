@@ -27,7 +27,7 @@ def _desired(asset: Asset) -> dict[str, tuple[str, str, Optional[date], Severity
             "high" if asset.quantity_actual == 0 else "medium",
         )
     if asset.next_service_due:
-        out["service"] = ("Scheduled service", "", asset.next_service_due, "medium")
+        out["service"] = ("Scheduled service", "", asset.next_service_due, asset.severity or "medium")
     if asset.next_calibration_due:
         out["calibration"] = ("Calibration", "", asset.next_calibration_due, "high")
     for part in asset.parts:
