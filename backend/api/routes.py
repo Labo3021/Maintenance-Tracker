@@ -22,6 +22,7 @@ from .schemas import (
     Asset,
     AssistantAnswer,
     AssistantQuery,
+    AssetManualResult,
     AssetCreate,
     AssetStatus,
     AssetUpdate,
@@ -288,15 +289,31 @@ def list_manuals():
 
 @router.post("/manuals", response_model=ManualInfo, status_code=201, tags=["manuals"])
 def upload_manual(file: UploadFile = File(..., description="PDF equipment manual")):
+    return _save_manual(file)
+
+
+def _save_manual(file: UploadFile) -> ManualInfo:
     if file.content_type != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(415, "Upload a PDF file")
     data = file.file.read()
+    if not data:
+        raise HTTPException(400, "The PDF is empty")
     if len(data) > settings.max_pdf_bytes:
         raise HTTPException(413, "PDF is too large")
     try:
         return manuals.save_and_add(file.filename or "manual.pdf", data)
     except manuals.ManualError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.post("/assets/{asset_id}/manual", response_model=AssetManualResult, tags=["manuals"])
+def upload_asset_manual(asset_id: str, file: UploadFile = File(..., description="PDF manual for this equipment")):
+    """Upload a PDF and link it to the asset in one step. The assistant then answers this asset's
+    questions from the manual (with page citations). Replaces any previously linked manual."""
+    _asset_or_404(asset_id)
+    info = _save_manual(file)
+    asset = store.update(asset_id, AssetUpdate(manual_id=info.id, manual_name=info.filename))
+    return AssetManualResult(asset=asset, manual=info)
 
 
 @router.post("/manual-query", response_model=ManualAnswer, tags=["manuals"])
@@ -349,6 +366,7 @@ def find_manual(asset_id: str, download: bool = Query(True, description="Downloa
         update = {"manual_url": result.manual_url}
         if result.manual:
             update["manual_id"] = result.manual.id
+            update["manual_name"] = result.manual.filename
         store.update(asset_id, AssetUpdate(**update))
 
     if result.manual and result.verified:
@@ -377,6 +395,7 @@ def set_manual_link(asset_id: str, body: ManualLinkRequest):
         if info:
             result.manual, result.verified = info, verified
             update["manual_id"] = info.id
+            update["manual_name"] = info.filename
             result.message = "Link saved and manual loaded for questions."
         else:
             result.message = "Link saved. It isn't a downloadable PDF, so Q&A isn't available for it."

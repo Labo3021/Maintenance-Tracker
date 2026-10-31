@@ -298,3 +298,27 @@ def test_prompts_adapt_to_household_lab_and_unknown(client, monkeypatch):
     client.post("/api/diagnose", files={"image": ("x.png", PNG, "image/png")})
     assert "Setting: a home" in prompts[0] and "refrigerant" in prompts[0]
     assert all("Setting: not recorded" in p for p in prompts[2:])  # no asset: infer from the photo
+
+
+def test_upload_manual_to_asset_and_assistant_uses_it(client, monkeypatch):
+    asset = client.post("/api/assets", json={"name": "Dishwasher", "manufacturer": "Bosch"}).json()
+    pdf = make_pdf("Clean the filter monthly")
+    r = client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("Bosch SHX manual.pdf", pdf, "application/pdf")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["manual"]["pages"] == 1 and body["manual"]["truncated"] is False
+    assert body["asset"]["manual_id"] == body["manual"]["id"] and body["asset"]["manual_name"] == "Bosch SHX manual.pdf"
+
+    seen = []
+    monkeypatch.setattr(settings, "ai_provider", "ollama")
+    monkeypatch.setattr(gemma_client, "generate_json",
+                        lambda prompt, **k: seen.append(prompt) or {"answer": "Monthly.", "pages_cited": [1]})
+    answer = client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How often?"}).json()
+    assert answer == {"answer": "Monthly.", "source": "model", "pages_cited": [1], "used_manual": "Bosch SHX manual.pdf"}
+    assert "Clean the filter monthly" in seen[0]
+
+    bad = client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.txt", b"hi", "text/plain")})
+    assert bad.status_code == 415
+    assert client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.pdf", b"", "application/pdf")}).status_code == 400
+    assert client.post(f"/api/assets/{asset['id']}/manual", files={"file": ("x.pdf", b"%PDF-1.4 junk", "application/pdf")}).status_code == 422
+    assert client.post("/api/assets/nope/manual", files={"file": ("m.pdf", pdf, "application/pdf")}).status_code == 404

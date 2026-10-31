@@ -57,8 +57,22 @@ export function toEquipment(asset, baseUrl) {
     added_on: '',
     photo_url: asset.photo_url ? new URL(asset.photo_url, baseUrl).href : '',
     missing: asset.quantity_missing || 0,
-    source: asset.source || 'other'
+    source: asset.source || 'other',
+    manual_name: asset.manual_name || (asset.manual_id ? 'Manual' : '')
   };
+}
+
+// Upload a PDF manual and link it to one piece of equipment; the assistant then answers from it.
+export async function uploadManual(baseUrl, equipmentId, file, {signal, request = fetch} = {}) {
+  if (!baseUrl) throw new Error('The backend is not connected yet.');
+  const body = new FormData();
+  body.append('file', file, file.name);
+  const response = await request(endpoint(baseUrl, `/assets/${equipmentId}/manual`), {method: 'POST', body, signal});
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof result.detail === 'string' ? result.detail : `The manual could not be uploaded (${response.status}).`);
+  }
+  return result;
 }
 
 // Friendly names for the backend's inventory sources; anything else shows as typed.

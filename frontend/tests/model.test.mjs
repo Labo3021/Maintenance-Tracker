@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, toEquipment, toTask} from '../src/api.mjs';
+import {addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -128,7 +128,7 @@ test('backend assets and tasks map to the frontend shapes', () => {
   const item = toEquipment({id: 'a1', name: 'Polea', category: 'general', code: '02360.00', manufacturer: null,
     model: null, location: 'Estante 1', photo_url: '/api/assets/a1/photo', quantity_missing: 7}, 'http://127.0.0.1:8000/api');
   assert.deepEqual(item, {id: 'a1', name: 'Polea', category: 'general', manufacturer: '', model: '02360.00',
-    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other'});
+    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other', manual_name: ''});
   const open = toTask({id: 't1', asset_id: 'a1', title: 'Missing 7 units: Polea', due_date: '2026-10-31', status: 'open',
     description: 'Counted 5 of 12.', notes: '', priority: 'medium', kind: 'stock'});
   assert.equal(open.equipment_id, 'a1');
@@ -214,4 +214,18 @@ test('inventory import sends the file with preview and name options', async () =
   assert.equal(captured.options.body.get('file').name, 'garage.csv');
   await assert.rejects(importInventory('http://h/api', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'Upload a .csv or .xlsx file'})})}), /Upload a \.csv/);
   assert.throws(() => importInventory('', file), /not connected/);
+});
+
+test('a manual PDF is uploaded and linked to one piece of equipment', async () => {
+  let captured;
+  const file = new File(['%PDF-1.4'], 'dishwasher.pdf', {type: 'application/pdf'});
+  const result = await uploadManual('http://h/api', 'a1', file, {request: async (url, options) => {
+    captured = {url, options};
+    return {ok: true, json: async () => ({asset: {id: 'a1', manual_name: 'dishwasher.pdf'}, manual: {pages: 12, truncated: false}})};
+  }});
+  assert.equal(captured.url, 'http://h/api/assets/a1/manual');
+  assert.equal(captured.options.body.get('file').name, 'dishwasher.pdf');
+  assert.equal(result.manual.pages, 12);
+  await assert.rejects(uploadManual('http://h/api', 'a1', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'PDF has no extractable text'})})}), /no extractable text/);
+  assert.equal(toEquipment({id: 'b', name: 'X', manual_id: 'm1'}, 'http://h/api').manual_name, 'Manual');
 });

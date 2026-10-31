@@ -125,6 +125,7 @@ class AssetBase(BaseModel):
     schedules: list[MaintenanceSchedule] = []
     manual_url: Optional[str] = Field(default=None, description="Link to the equipment manual")
     manual_id: Optional[str] = Field(default=None, description="Loaded manual, usable with /api/manual-query")
+    manual_name: Optional[ShortText] = Field(default=None, description="File name of the linked manual, for display")
     quantity_expected: Optional[int] = Field(default=None, ge=0, description="Units there should be")
     quantity_actual: Optional[int] = Field(default=None, ge=0, description="Units last counted")
     groups: list[ShortText] = Field(default=[], description="Kits, sets or groups this item belongs to")
@@ -166,6 +167,7 @@ class AssetUpdate(BaseModel):
     schedules: Optional[list[MaintenanceSchedule]] = None
     manual_url: Optional[str] = None
     manual_id: Optional[str] = None
+    manual_name: Optional[ShortText] = None
     code: Optional[ShortText] = None
     source: Optional[ShortText] = None
     quantity_expected: Optional[int] = Field(default=None, ge=0)
@@ -442,3 +444,8 @@ class AssistantAnswer(BaseModel):
     source: ResultSource
     pages_cited: list[int] = []
     used_manual: Optional[str] = Field(default=None, description="Manual file the answer came from, if any")
+
+
+class AssetManualResult(BaseModel):
+    asset: Asset
+    manual: ManualInfo = Field(description="truncated=true means only the first part fits the model's context")

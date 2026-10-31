@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {addEquipment, addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel} from './api.mjs';
+import {addEquipment, addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, uploadManual} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const EMPTY = {schema_version: 1, equipment: [], tasks: []};
@@ -111,13 +111,32 @@ function ImportModal({onClose, onImported}) {
   </dialog>;
 }
 
-function Assistant({equipment}) {
+function Assistant({equipment, onManualUploaded}) {
   const [equipmentId, setEquipmentId] = useState(equipment[0]?.id || '');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [photo, setPhoto] = useState(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [manualNote, setManualNote] = useState('');
+  const selected = equipment.find(item => item.id === equipmentId);
+  async function attachManual(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !equipmentId) return;
+    if (!(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) || file.size > 50 * 1024 * 1024) {
+      setError('Choose a PDF manual under 50 MB.');
+      return;
+    }
+    setUploading(true); setError(''); setManualNote('');
+    try {
+      const {manual} = await uploadManual(API_BASE, equipmentId, file);
+      setManualNote(`Manual linked: ${manual.pages} pages.${manual.truncated ? ' It is long, so only the first part is used for answers.' : ''} Answers for this item now come from it.`);
+      await onManualUploaded?.();
+    } catch (issue) {setError(issue.message);}
+    finally {setUploading(false);}
+  }
   const controller = useRef(null);
   const photoUrls = useRef(new Set());
   useEffect(() => () => { for (const url of photoUrls.current) URL.revokeObjectURL(url); }, []);
@@ -125,7 +144,7 @@ function Assistant({equipment}) {
     if (!equipment.some(item => item.id === equipmentId)) setEquipmentId(equipment[0]?.id || '');
   }, [equipment, equipmentId]);
   useEffect(() => {
-    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false);
+    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false); setManualNote('');
     return () => controller.current?.abort();
   }, [equipmentId]);
   function attachPhoto(event) {
@@ -177,6 +196,8 @@ function Assistant({equipment}) {
     </div>
     <form onSubmit={submit}>
       <label>Equipment<select value={equipmentId} onChange={event => setEquipmentId(event.target.value)} disabled={!equipment.length}>{equipment.length ? equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">Add equipment first</option>}</select></label>
+      {API_BASE && selected && <div className="manual-row"><Icon name="list" size={15}/><span className="manual-name">{selected.manual_name ? <>Manual: <strong>{selected.manual_name}</strong></> : 'No manual linked'}</span><label className="photo-button">{uploading ? 'Uploading…' : selected.manual_name ? 'Replace PDF' : 'Upload manual'}<input type="file" accept="application/pdf,.pdf" onChange={attachManual} disabled={uploading} aria-label={`Upload a PDF manual for ${selected.name}`}/></label></div>}
+      {manualNote && <p className="form-hint" role="status">{manualNote}</p>}
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
@@ -293,7 +314,7 @@ export default function App() {
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>
-      </section><Assistant equipment={scoped.equipment}/></div>
+      </section><Assistant equipment={scoped.equipment} onManualUploaded={refresh}/></div>
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>

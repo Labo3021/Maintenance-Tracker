@@ -251,3 +251,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .import-preview details { margin-top: 8px; }
 .import-preview details ul { max-height: 140px; overflow: auto; padding-left: 18px; }
 @media (max-width: 640px) { .header-actions { width: 100%; justify-content: stretch; } .header-actions .button { flex: 1; } }
+.manual-row { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 10px; border: 1px dashed #cbdcf5; border-radius: 9px; background: #f7faff; color: #4f6275; font-size: 11px; }
+.manual-row .manual-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manual-row .photo-button { flex: none; }
