@@ -1,12 +1,13 @@
 """LabGuard AI backend. Run from backend/:  uvicorn main:app --reload"""
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai import manuals
+from ai import assistant, manuals
 from api.routes import router
 from config import settings
 
@@ -16,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     manuals.load_existing()
+    threading.Thread(target=assistant.warm_up, daemon=True).start()
     yield
 
 

@@ -209,3 +209,22 @@ def test_identify_cleans_model_output_and_falls_back(monkeypatch):
     monkeypatch.setattr(gemma_client, "generate_json", boom)
     result = identify.identify_image(PNG, "image/png")
     assert result.source == "fallback" and result.draft.schedules
+
+
+def test_assistant_endpoint(client, monkeypatch):
+    asset = client.post("/api/assets", json={"name": "Benchtop centrifuge", "model": "RC-5000"}).json()
+    r = client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How do I balance it?"})
+    assert r.status_code == 200 and r.json()["source"] == "mock" and r.json()["answer"]
+    assert client.post("/api/assistant", json={"equipment_id": "nope", "message": "?"}).status_code == 404
+
+    seen = {}
+    monkeypatch.setattr(settings, "ai_provider", "ollama")
+    monkeypatch.setattr(gemma_client, "generate", lambda prompt, **k: seen.setdefault("p", prompt) and "Use matched tubes.")
+    body = client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How do I balance it?"}).json()
+    assert body == {"answer": "Use matched tubes.", "source": "model", "pages_cited": [], "used_manual": None}
+    assert "RC-5000" in seen["p"] and "How do I balance it?" in seen["p"]
+
+
+def test_cors_allows_frontend(client):
+    r = client.options("/api/assets", headers={"Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "GET"})
+    assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"

@@ -397,3 +397,18 @@ class PhotoImportResult(BaseModel):
     matched: int
     unmatched_files: list[str] = Field(default=[], description="Files whose name matched no asset code")
     assets_without_photo: int
+
+
+# --- Assistant panel (frontend) ----------------------------------------------
+
+
+class AssistantQuery(BaseModel):
+    equipment_id: str
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class AssistantAnswer(BaseModel):
+    answer: str
+    source: ResultSource
+    pages_cited: list[int] = []
+    used_manual: Optional[str] = Field(default=None, description="Manual file the answer came from, if any")
