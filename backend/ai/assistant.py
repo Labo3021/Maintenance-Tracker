@@ -33,6 +33,10 @@ def _describe(asset: Asset) -> str:
         lines.append(f"- Tools: {', '.join(asset.tools_needed)}")
     if asset.repair_steps:
         lines.append("- Known procedure: " + " ".join(f"{i}) {s}" for i, s in enumerate(asset.repair_steps, 1)))
+    if asset.video_url:
+        lines.append(f"- How-to video (suggest it when useful): {asset.video_url}")
+    if asset.purchase_url:
+        lines.append(f"- Where to buy the part: {asset.purchase_url}")
     open_tasks = [t for t in asset.tasks if t.status == "open"][:5]
     if open_tasks:
         lines.append("- Open tasks: " + "; ".join(f"{t.title} (due {t.due_date})" for t in open_tasks))

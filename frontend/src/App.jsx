@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {addEquipment, addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, uploadManual} from './api.mjs';
+import {addEquipment, addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, sourceLabel, uploadManual} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const EMPTY = {schema_version: 1, equipment: [], tasks: []};
@@ -109,6 +109,29 @@ function ImportModal({onClose, onImported}) {
       <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={!file || Boolean(pending)}>{pending === 'preview' ? 'Reading file…' : pending === 'import' ? 'Importing…' : preview ? `Import ${preview.created + preview.updated} items` : 'Preview'}<Icon name={preview ? 'check' : 'arrow'} size={16}/></button></div>
     </form>
   </dialog>;
+}
+
+function ItemDetails({item, onClose}) {
+  const facts = [item.difficulty && `${item.difficulty[0].toUpperCase()}${item.difficulty.slice(1)} job`,
+    item.estimated_minutes && `About ${item.estimated_minutes} min`,
+    item.severity && `${item.severity[0].toUpperCase()}${item.severity.slice(1)} importance`].filter(Boolean);
+  return <section className="item-details panel" aria-labelledby="item-details-title">
+    <div className="item-details-head">
+      {item.photo_url && <img src={item.photo_url} alt=""/>}
+      <div><p className="eyebrow">HOW TO LOOK AFTER IT</p><h2 id="item-details-title">{item.name}</h2><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ')}</p>
+        {facts.length > 0 && <div className="item-facts">{facts.map(fact => <span key={fact}>{fact}</span>)}</div>}</div>
+      <button className="icon-button" aria-label="Close details" onClick={onClose}><Icon name="close"/></button>
+    </div>
+    {item.notes && <p className="item-notes">{item.notes}</p>}
+    <div className="item-details-body">
+      {item.tools_needed.length > 0 && <div><h3>Tools</h3><ul>{item.tools_needed.map(tool => <li key={tool}>{tool}</li>)}</ul></div>}
+      {item.repair_steps.length > 0 && <div><h3>Steps</h3><ol>{item.repair_steps.map((step, index) => <li key={index}>{step}</li>)}</ol></div>}
+    </div>
+    {(item.video_url || item.purchase_url) && <div className="item-links">
+      {item.video_url && <a className="button primary" href={item.video_url} target="_blank" rel="noopener noreferrer">▶ Watch how-to video</a>}
+      {item.purchase_url && <a className="button secondary" href={item.purchase_url} target="_blank" rel="noopener noreferrer">🛒 Buy the part</a>}
+    </div>}
+  </section>;
 }
 
 function Assistant({equipment, onManualUploaded}) {
@@ -302,6 +325,7 @@ export default function App() {
         const needsAttention = tasks.some(task => taskStatus(task, today) === 'overdue');
         return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span><EquipmentArt item={item} index={index}/></div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
       })}{!visibleEquipment.length && <div className="empty panel"><Icon name="box" size={30}/><h3>{query ? 'No matching equipment' : 'Start with one piece of equipment'}</h3><p>{query ? 'Try another name, model, or location.' : 'Add something you want to keep in good shape.'}</p>{!query && <button className="button primary" onClick={() => setModal('equipment')}>Add equipment</button>}</div>}</section>}
+      {(view === 'Overview' || view === 'Equipment') && selected && hasDetails(selected) && <ItemDetails item={selected} onClose={() => setSelectedId('')}/>}
       <div className="workspace-columns"><section className="task-panel panel" aria-labelledby="tasks-title">
         <div className="task-heading"><div><h2 id="tasks-title">{view === 'History' ? 'Completed tasks' : selected ? selected.name : 'Coming up next'}<span className="count">{visibleTasks.length}</span></h2><p>{view === 'History' ? 'Every completed task is a little win.' : 'The small things that keep everything running.'}</p></div><button className="text-button" onClick={() => setModal('task')} disabled={!data.equipment.length}><Icon name="plus" size={16}/>Add task</button></div>
         <div className="task-tools">{view !== 'History' && <div className="tabs" aria-label="Filter tasks">{[['open', 'Open'], ['overdue', 'Overdue'], ['due_today', 'Today'], ['all', 'All']].map(([value, label]) => <button key={value} aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>}{selected && <button className="selection-chip" onClick={() => setSelectedId('')}>Clear equipment filter<Icon name="close" size={13}/></button>}</div>

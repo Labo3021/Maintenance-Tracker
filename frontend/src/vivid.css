@@ -254,3 +254,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .manual-row { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 10px; border: 1px dashed #cbdcf5; border-radius: 9px; background: #f7faff; color: #4f6275; font-size: 11px; }
 .manual-row .manual-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .manual-row .photo-button { flex: none; }
+
+/* Item details (how-to info for the selected equipment) */
+.item-details { padding: 20px 22px; margin: 0 0 22px; }
+.item-details-head { display: flex; align-items: flex-start; gap: 16px; }
+.item-details-head img { width: 84px; height: 84px; flex: none; object-fit: contain; border-radius: 12px; background: #fff; border: 1px solid #e6edf5; padding: 4px; }
+.item-details-head > div { flex: 1; min-width: 0; }
+.item-details-head h2 { margin: 4px 0 2px; font-size: 20px; }
+.item-details-head p { margin: 0; color: #6b7c8f; font-size: 12px; }
+.item-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.item-facts span { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: #e9f2ff; color: #1769e8; }
+.item-notes { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid #1769e8; background: #f4f8fd; border-radius: 6px; font-size: 13px; line-height: 1.6; }
+.item-details-body { display: grid; grid-template-columns: minmax(140px, 1fr) 3fr; gap: 18px; margin-top: 14px; font-size: 13px; line-height: 1.6; }
+.item-details-body h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6b7c8f; }
+.item-details-body ul, .item-details-body ol { margin: 0; padding-left: 18px; }
+.item-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.item-links a { text-decoration: none; }
+@media (max-width: 720px) { .item-details-body { grid-template-columns: 1fr; } }

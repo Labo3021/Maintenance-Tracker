@@ -58,8 +58,29 @@ export function toEquipment(asset, baseUrl) {
     photo_url: asset.photo_url ? new URL(asset.photo_url, baseUrl).href : '',
     missing: asset.quantity_missing || 0,
     source: asset.source || 'other',
-    manual_name: asset.manual_name || (asset.manual_id ? 'Manual' : '')
+    manual_name: asset.manual_name || (asset.manual_id ? 'Manual' : ''),
+    // How-to details (household items from data/): shown in the item details box.
+    notes: asset.notes || '',
+    difficulty: asset.difficulty || '',
+    estimated_minutes: asset.estimated_minutes || null,
+    severity: asset.severity || '',
+    tools_needed: asset.tools_needed || [],
+    repair_steps: asset.repair_steps || [],
+    video_url: safeUrl(asset.video_url),
+    purchase_url: safeUrl(asset.purchase_url)
   };
+}
+
+// Only open real web links (no javascript: or other schemes coming from data files).
+export function safeUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch { return ''; }
+}
+
+export function hasDetails(item) {
+  return Boolean(item.notes || item.tools_needed.length || item.repair_steps.length || item.video_url || item.purchase_url);
 }
 
 // Upload a PDF manual and link it to one piece of equipment; the assistant then answers from it.

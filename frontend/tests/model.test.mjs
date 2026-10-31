@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
+import {addTask, askAssistant, completeTask, hasDetails, importInventory, listSources, loadWorkspace, safeUrl, sourceLabel, toEquipment, toTask, uploadManual} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -128,7 +128,7 @@ test('backend assets and tasks map to the frontend shapes', () => {
   const item = toEquipment({id: 'a1', name: 'Polea', category: 'general', code: '02360.00', manufacturer: null,
     model: null, location: 'Estante 1', photo_url: '/api/assets/a1/photo', quantity_missing: 7}, 'http://127.0.0.1:8000/api');
   assert.deepEqual(item, {id: 'a1', name: 'Polea', category: 'general', manufacturer: '', model: '02360.00',
-    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other', manual_name: ''});
+    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other', manual_name: '', notes: '', difficulty: '', estimated_minutes: null, severity: '', tools_needed: [], repair_steps: [], video_url: '', purchase_url: ''});
   const open = toTask({id: 't1', asset_id: 'a1', title: 'Missing 7 units: Polea', due_date: '2026-10-31', status: 'open',
     description: 'Counted 5 of 12.', notes: '', priority: 'medium', kind: 'stock'});
   assert.equal(open.equipment_id, 'a1');
@@ -228,4 +228,19 @@ test('a manual PDF is uploaded and linked to one piece of equipment', async () =
   assert.equal(result.manual.pages, 12);
   await assert.rejects(uploadManual('http://h/api', 'a1', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'PDF has no extractable text'})})}), /no extractable text/);
   assert.equal(toEquipment({id: 'b', name: 'X', manual_id: 'm1'}, 'http://h/api').manual_name, 'Manual');
+});
+
+test('household how-to details map for the details box, and only web links are kept', () => {
+  const item = toEquipment({id: 'asset-303', name: 'Dishwasher Filter', notes: 'Clean more often with heavy cycles.',
+    difficulty: 'easy', estimated_minutes: 5, severity: 'medium', tools_needed: ['Soft brush'], repair_steps: ['Twist out the filter.'],
+    video_url: 'https://www.youtube.com/watch?v=kxRDs3GrdEk', purchase_url: 'javascript:alert(1)'}, 'http://h/api');
+  assert.equal(item.notes, 'Clean more often with heavy cycles.');
+  assert.deepEqual(item.repair_steps, ['Twist out the filter.']);
+  assert.equal(item.video_url, 'https://www.youtube.com/watch?v=kxRDs3GrdEk');
+  assert.equal(item.purchase_url, '');  // a script link from a data file is dropped
+  assert.equal(hasDetails(item), true);
+  assert.equal(hasDetails(toEquipment({id: 'x', name: 'Plain'}, 'http://h/api')), false);
+  assert.equal(safeUrl('http://example.com/a'), 'http://example.com/a');
+  assert.equal(safeUrl('ftp://example.com'), '');
+  assert.equal(safeUrl(undefined), '');
 });

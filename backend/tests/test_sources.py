@@ -50,6 +50,7 @@ def test_household_fields_via_api_and_assistant_context(client, monkeypatch):
     monkeypatch.setattr(gemma_client, "generate", lambda prompt, **k: seen.append(prompt) or "ok")
     client.post("/api/assistant", json={"equipment_id": asset["id"], "message": "How do I change it?"})
     assert "Step Ladder" in seen[0] and "Swap the 9V battery" in seen[0] and "easy difficulty" in seen[0]
+    assert "How-to video" in seen[0] and HOUSEHOLD["video_url"] in seen[0] and HOUSEHOLD["purchase_url"] in seen[0]
 
 
 def test_demo_assets_are_served(client, tmp_path, monkeypatch):
