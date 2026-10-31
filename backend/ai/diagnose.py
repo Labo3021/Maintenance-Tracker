@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from api.schemas import DiagnosisResult, RepairStep, ResultSource, SafetyHazard
 
 from . import gemma_client
-from .prompts import DIAGNOSE_PROMPT, DIAGNOSE_RETRY_SUFFIX
+from .prompts import DIAGNOSE_PROMPT, DIAGNOSE_RETRY_SUFFIX, setting_guidance
 
 log = logging.getLogger(__name__)
 
@@ -45,9 +45,11 @@ FALLBACK_DIAGNOSIS = DiagnosisResult(
     parts_needed=[],
     steps=[
         RepairStep(step=1, instruction="Power down and isolate the equipment.",
-                   caution="Follow your lab's lockout/tagout and decontamination procedures."),
+                   caution="Unplug it or switch off its breaker, and close any water or gas supply. "
+                           "In a lab, also follow lockout/tagout and decontamination procedures."),
         RepairStep(step=2, instruction="Check the equipment manual's troubleshooting section."),
-        RepairStep(step=3, instruction="Contact the lab manager or manufacturer service if unsure."),
+        RepairStep(step=3, instruction="If unsure, contact the manufacturer's service, a qualified technician, "
+                                       "or your lab/facility manager."),
     ],
     requires_technician=True,
 )
@@ -58,6 +60,7 @@ def diagnose_image(
     mime_type: str,
     equipment_hint: Optional[str] = None,
     notes: Optional[str] = None,
+    environment: Optional[str] = None,
 ) -> tuple[DiagnosisResult, ResultSource]:
     """Never raises: returns the fallback diagnosis if the model fails twice."""
     if gemma_client.is_mock():
@@ -68,7 +71,7 @@ def diagnose_image(
         context += f"Equipment: {equipment_hint}\n"
     if notes:
         context += f"User notes: {notes}\n"
-    prompt = DIAGNOSE_PROMPT.format(context=context)
+    prompt = DIAGNOSE_PROMPT.format(setting=setting_guidance(environment), context=context)
 
     error = ""
     for attempt in range(2):

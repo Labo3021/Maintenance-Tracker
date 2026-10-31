@@ -20,16 +20,21 @@ from .schemas import (
     AssetCreate,
     AssetUpdate,
     DiagnosisResult,
+    MaintenanceSchedule,
     MaintenanceTask,
     TaskCreate,
     TaskUpdate,
     TaskView,
 )
-from .scheduling import record_completion, sync_tasks, task_kind
+from .scheduling import interval_for, record_completion, sync_tasks, task_kind
 
 # How soon a diagnosis-generated task is due, by severity.
 DUE_IN_DAYS = {"critical": 0, "high": 2, "medium": 7, "low": 30}
 PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+class TaskConflict(ValueError):
+    """The requested task change isn't allowed (e.g. reopening a recurring task)."""
 
 
 def _new_id(prefix: str) -> str:
@@ -204,7 +209,16 @@ class InventoryStore:
             asset = self._assets.get(asset_id)
             if asset is None:
                 return None
-            task = MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), source=source, **data.model_dump())
+            if data.repeat_every_days:
+                # A recurring task is a schedule whose first occurrence falls on due_date.
+                n = data.repeat_every_days
+                schedule = MaintenanceSchedule(title=data.title, interval_days=n, priority=data.priority,
+                                               last_done=data.due_date - timedelta(days=n), notes=data.description)
+                asset = self._put(asset.model_copy(update={"schedules": [*asset.schedules, schedule]}))
+                self._save()
+                return next(t for t in asset.tasks if t.schedule_id == f"schedule:{schedule.id}")
+            task = MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), source=source,
+                                   **data.model_dump(exclude={"repeat_every_days"}))
             self._assets[asset_id] = asset.model_copy(update={"tasks": [*asset.tasks, task]})
             self._save()
             return task
@@ -227,6 +241,10 @@ class InventoryStore:
                 return None
             for task in asset.tasks:
                 if task.id == task_id:
+                    if changes.get("status") == "open" and task.status == "done" and task.schedule_id:
+                        raise TaskConflict(
+                            "Recurring tasks can't be reopened: the next occurrence is already scheduled."
+                        )
                     updated = task.model_copy(update=changes)
                     tasks = [updated if t.id == task_id else t for t in asset.tasks]
                     self._assets[asset_id] = asset.model_copy(update={"tasks": tasks})
@@ -269,6 +287,7 @@ class InventoryStore:
                         asset_name=asset.name,
                         kind=task_kind(task),
                         days_until_due=days,
+                        interval_days=interval_for(asset, task.schedule_id),
                     )
                 )
         return sorted(out, key=lambda t: (t.status == "done", t.due_date, -PRIORITY_RANK[t.priority]))

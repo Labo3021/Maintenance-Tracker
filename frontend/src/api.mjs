@@ -20,12 +20,20 @@ async function call(baseUrl, path, {method = 'GET', body, signal, request = fetc
   return response.status === 204 ? null : response.json();
 }
 
-export async function askAssistant(baseUrl, equipmentId, message, {signal, request = fetch} = {}) {
+export async function askAssistant(baseUrl, equipmentId, message, {image, signal, request = fetch} = {}) {
   if (!baseUrl) throw new Error('The AI assistant is not connected yet.');
+  // Text uses JSON. A photo uses multipart/form-data with fields equipment_id, message and image;
+  // the browser sets the multipart Content-Type (with its boundary) itself.
+  const body = image ? new FormData() : JSON.stringify({equipment_id: equipmentId, message});
+  if (image) {
+    body.append('equipment_id', equipmentId);
+    body.append('message', message);
+    body.append('image', image, image.name);
+  }
   const response = await request(endpoint(baseUrl, '/assistant'), {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({equipment_id: equipmentId, message}),
+    ...(image ? {} : {headers: {'Content-Type': 'application/json'}}),
+    body,
     signal
   });
   if (!response.ok) throw new Error(`The assistant could not respond (${response.status}). Please try again.`);
@@ -52,6 +60,15 @@ export function toEquipment(asset, baseUrl) {
   };
 }
 
+// The UI's reminder choices, in days, as the backend's repeat interval.
+export const RECURRENCE_DAYS = {weekly: 7, monthly: 30, quarterly: 91};
+
+function recurrenceLabel(days) {
+  if (!days) return 'none';
+  const named = Object.entries(RECURRENCE_DAYS).find(([, value]) => value === days);
+  return named ? named[0] : `every ${days} days`;
+}
+
 export function toTask(task) {
   return {
     id: task.id,
@@ -61,7 +78,10 @@ export function toTask(task) {
     completed_at: task.status === 'done' ? (task.completed_on || task.due_date) : null,
     notes: [task.description, task.notes].filter(Boolean).join('\n\n'),
     priority: task.priority,
-    kind: task.kind
+    kind: task.kind,
+    recurrence: recurrenceLabel(task.interval_days),
+    // The backend already scheduled the next occurrence, so a finished recurring task stays finished.
+    reopen_locked: task.status === 'done' && Boolean(task.schedule_id)
   };
 }
 
@@ -88,6 +108,7 @@ export function addEquipment(baseUrl, item, options) {
 
 export function addTask(baseUrl, task, options) {
   return call(baseUrl, `/assets/${task.equipment_id}/tasks`, {...options, method: 'POST', body: {
-    title: task.title, due_date: task.due_date, description: task.notes
+    title: task.title, due_date: task.due_date, description: task.notes,
+    repeat_every_days: RECURRENCE_DAYS[task.recurrence] ?? null
   }});
 }

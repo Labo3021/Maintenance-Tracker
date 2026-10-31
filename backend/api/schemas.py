@@ -204,6 +204,10 @@ class TaskCreate(BaseModel):
     description: LongText = ""
     due_date: date
     priority: Severity = "medium"
+    repeat_every_days: Optional[int] = Field(
+        default=None, ge=1, le=3650,
+        description="Make it recurring: first due on due_date, then every N days after each completion",
+    )
 
 
 class TaskUpdate(BaseModel):
@@ -306,6 +310,7 @@ class TaskView(MaintenanceTask):
     asset_name: str
     kind: TaskKind
     days_until_due: int = Field(description="Negative means overdue")
+    interval_days: Optional[int] = Field(default=None, description="Repeat interval for recurring tasks")
 
 
 class TaskComplete(BaseModel):

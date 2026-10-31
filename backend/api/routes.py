@@ -6,7 +6,9 @@ import zipfile
 from pathlib import PurePosixPath
 from typing import Literal, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from pydantic import ValidationError
 from fastapi.responses import FileResponse
 
 from ai import assistant, manual_finder, manuals
@@ -43,7 +45,7 @@ from .schemas import (
     TaskUpdate,
     TaskView,
 )
-from .store import store
+from .store import TaskConflict, store
 
 router = APIRouter(prefix="/api")
 
@@ -189,7 +191,10 @@ def create_task(asset_id: str, body: TaskCreate):
 @router.patch("/assets/{asset_id}/tasks/{task_id}", response_model=MaintenanceTask, tags=["assets"])
 def update_task(asset_id: str, task_id: str, body: TaskUpdate):
     _asset_or_404(asset_id)
-    task = store.update_task(asset_id, task_id, body)
+    try:
+        task = store.update_task(asset_id, task_id, body)
+    except TaskConflict as e:
+        raise HTTPException(409, str(e)) from e
     if task is None:
         raise HTTPException(404, f"Task '{task_id}' not found")
     return task
@@ -266,7 +271,9 @@ def diagnose(
     asset = _asset_or_404(asset_id) if asset_id else None
     hint = " ".join(filter(None, [asset.manufacturer, asset.model, asset.name])) if asset else None
 
-    diagnosis, source = diagnose_image(data, image.content_type, equipment_hint=hint, notes=notes)
+    environment = assistant.setting_key(asset) if asset else None
+    diagnosis, source = diagnose_image(data, image.content_type, equipment_hint=hint, notes=notes,
+                                       environment=environment)
     # Don't schedule work from a failed diagnosis; the UI shows the fallback instead.
     task = store.add_task_from_diagnosis(asset.id, diagnosis) if asset and source != "fallback" else None
     return DiagnoseResponse(diagnosis=diagnosis, source=source, task=task)
@@ -401,7 +408,36 @@ def get_photo(asset_id: str):
 
 
 @router.post("/assistant", response_model=AssistantAnswer, tags=["manuals"])
-def ask_assistant(body: AssistantQuery):
-    """Free-form question about one asset. Uses its loaded manual if it has one, otherwise
-    Gemma's general knowledge plus the asset's details and open tasks."""
-    return assistant.answer(_asset_or_404(body.equipment_id), body.message)
+async def ask_assistant(request: Request):
+    """Free-form question about one asset. Two body formats:
+    - JSON `{"equipment_id", "message"}`: uses the asset's loaded manual if it has one, otherwise
+      Gemma's general knowledge plus the asset's details and open tasks.
+    - multipart/form-data with `equipment_id`, `message` and an optional `image` (JPEG/PNG/WebP):
+      Gemma also looks at the photo."""
+    image = mime = None
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
+        form = await request.form()
+        upload = form.get("image")
+        if upload is not None and not isinstance(upload, str):
+            if upload.content_type not in IMAGE_TYPES:
+                raise HTTPException(415, f"Unsupported image type '{upload.content_type}'. Use JPEG, PNG or WebP.")
+            image, mime = await upload.read(), upload.content_type
+            if not image:
+                raise HTTPException(400, "Image is empty")
+            if len(image) > settings.max_image_bytes:
+                raise HTTPException(413, "Image is too large")
+        fields = {"equipment_id": form.get("equipment_id"), "message": form.get("message") or ""}
+        if image and not fields["message"].strip():
+            fields["message"] = "What should I check in this photo?"
+    else:
+        try:
+            fields = await request.json()
+        except ValueError as e:
+            raise HTTPException(422, "Send JSON {equipment_id, message} or multipart form data") from e
+    try:
+        body = AssistantQuery.model_validate(fields)
+    except ValidationError as e:
+        raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
+    asset = _asset_or_404(body.equipment_id)
+    return await run_in_threadpool(assistant.answer, asset, body.message, image, mime or "image/jpeg")
