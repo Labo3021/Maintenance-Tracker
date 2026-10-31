@@ -4,8 +4,10 @@ Change these only with the whole team: the frontend builds against the shapes
 shown at http://localhost:8000/docs.
 """
 
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
+from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -13,6 +15,9 @@ Severity = Literal["low", "medium", "high", "critical"]
 AssetStatus = Literal["operational", "needs_attention", "out_of_service"]
 TaskStatus = Literal["open", "done"]
 ResultSource = Literal["model", "mock", "fallback"]
+Environment = Literal["lab", "household", "enterprise"]
+ScheduleKind = Literal["inspect", "clean", "replace", "service", "calibrate"]
+TaskKind = Literal["service", "calibration", "part", "schedule", "stock", "task"]
 
 
 # --- Diagnosis (Visual Equipment Inspector) ---------------------------------
@@ -60,6 +65,23 @@ class Part(BaseModel):
         return None
 
 
+class MaintenanceSchedule(BaseModel):
+    """A recurring job, e.g. "Replace water filter" every 180 days. Keeps one open task alive."""
+
+    id: str = Field(default_factory=lambda: f"sch-{uuid.uuid4().hex[:8]}")
+    title: str
+    kind: ScheduleKind = "inspect"
+    interval_days: int = Field(ge=1)
+    last_done: Optional[date] = Field(default=None, description="Unknown = first task is due today")
+    priority: Severity = "medium"
+    notes: str = ""
+
+    @computed_field
+    @property
+    def next_due(self) -> Optional[date]:
+        return self.last_done + timedelta(days=self.interval_days) if self.last_done else None
+
+
 class MaintenanceTask(BaseModel):
     id: str
     title: str
@@ -67,13 +89,21 @@ class MaintenanceTask(BaseModel):
     due_date: date
     priority: Severity = "medium"
     status: TaskStatus = "open"
-    source: Literal["manual", "diagnosis"] = "manual"
+    source: Literal["manual", "diagnosis", "schedule"] = "manual"
     created_at: datetime
+    schedule_id: Optional[str] = Field(
+        default=None,
+        description="Set on auto-generated tasks: service, calibration, stock, part:<name> or schedule:<id>",
+    )
+    completed_on: Optional[date] = None
+    snoozed_until: Optional[date] = None
+    notes: str = ""
 
 
 class AssetBase(BaseModel):
     name: str
-    category: str = Field(default="general", description="e.g. centrifuge, autoclave, hplc")
+    code: Optional[str] = Field(default=None, description="Inventory code / SKU / catalog number / asset tag")
+    category: str = Field(default="general", description="e.g. centrifuge, autoclave, hplc, kit")
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     serial_number: Optional[str] = None
@@ -84,6 +114,15 @@ class AssetBase(BaseModel):
     last_calibration_date: Optional[date] = None
     calibration_interval_days: Optional[int] = Field(default=None, ge=1)
     parts: list[Part] = []
+    environment: Environment = "lab"
+    schedules: list[MaintenanceSchedule] = []
+    manual_url: Optional[str] = Field(default=None, description="Link to the equipment manual")
+    manual_id: Optional[str] = Field(default=None, description="Loaded manual, usable with /api/manual-query")
+    quantity_expected: Optional[int] = Field(default=None, ge=0, description="Units there should be")
+    quantity_actual: Optional[int] = Field(default=None, ge=0, description="Units last counted")
+    groups: list[str] = Field(default=[], description="Kits, sets or groups this item belongs to")
+    notes: str = ""
+    photo: Optional[str] = Field(default=None, description="Stored photo file name; fetch via photo_url")
 
 
 class AssetCreate(AssetBase):
@@ -105,6 +144,15 @@ class AssetUpdate(BaseModel):
     last_calibration_date: Optional[date] = None
     calibration_interval_days: Optional[int] = Field(default=None, ge=1)
     parts: Optional[list[Part]] = None
+    environment: Optional[Environment] = None
+    schedules: Optional[list[MaintenanceSchedule]] = None
+    manual_url: Optional[str] = None
+    manual_id: Optional[str] = None
+    code: Optional[str] = None
+    quantity_expected: Optional[int] = Field(default=None, ge=0)
+    quantity_actual: Optional[int] = Field(default=None, ge=0)
+    groups: Optional[list[str]] = None
+    notes: Optional[str] = None
 
 
 class Asset(AssetBase):
@@ -125,6 +173,28 @@ class Asset(AssetBase):
             return self.last_calibration_date + timedelta(days=self.calibration_interval_days)
         return None
 
+    @computed_field
+    @property
+    def quantity_missing(self) -> Optional[int]:
+        """Units short of expected (0 if complete or over); null if counts aren't tracked."""
+        if self.quantity_expected is None or self.quantity_actual is None:
+            return None
+        return max(self.quantity_expected - self.quantity_actual, 0)
+
+    @computed_field
+    @property
+    def photo_url(self) -> Optional[str]:
+        return f"/api/assets/{self.id}/photo" if self.photo else None
+
+    @computed_field
+    @property
+    def manual_search_url(self) -> Optional[str]:
+        """Web search link for the manual; always available as a fallback."""
+        terms = " ".join(filter(None, [self.manufacturer, self.model]))
+        if not terms:
+            return None
+        return "https://www.google.com/search?q=" + quote_plus(f"{terms} user manual pdf")
+
 
 class TaskCreate(BaseModel):
     title: str
@@ -144,7 +214,7 @@ class TaskUpdate(BaseModel):
 class Alert(BaseModel):
     asset_id: str
     asset_name: str
-    kind: Literal["service", "calibration", "part", "task"]
+    kind: TaskKind
     title: str
     due_date: date
     days_until_due: int = Field(description="Negative means overdue")
@@ -184,3 +254,158 @@ class ManualAnswer(BaseModel):
     answer: str
     pages_cited: list[int] = []
     source: ResultSource
+
+
+# --- Inventory import (CSV / Excel) ------------------------------------------
+
+ImportMode = Literal["append", "replace"]
+MappingMethod = Literal["alias", "ai", "unmapped"]
+
+
+class ColumnMapping(BaseModel):
+    header: str
+    field: Optional[str] = Field(description="Asset field this column fills, or null if ignored")
+    method: MappingMethod
+
+
+class ImportIssue(BaseModel):
+    row: int = Field(description="Spreadsheet row number, as shown in Excel")
+    message: str
+
+
+class ImportResult(BaseModel):
+    dry_run: bool
+    mode: ImportMode
+    file_type: Literal["csv", "xlsx"]
+    sheet: Optional[str] = None
+    header_row: int
+    columns: list[ColumnMapping]
+    ai_mapping: ResultSource | Literal["not_needed", "disabled"] = Field(
+        description="How unmatched headers were handled: model/mock/fallback, not_needed, or disabled"
+    )
+    total_rows: int
+    created: int = Field(description="New assets (would be created, on a dry run)")
+    updated: int = Field(description="Existing assets matched by serial number")
+    skipped: list[ImportIssue] = []
+    warnings: list[ImportIssue] = []
+    preview: list[AssetCreate] = Field(default=[], description="First parsed rows, to show before confirming")
+    stock_mismatches: int = Field(default=0, description="Rows with fewer units counted than expected")
+    kits_created: int = Field(default=0, description="Kit/group assets with a recurring stock count")
+
+
+# --- Task manager -------------------------------------------------------------
+
+
+class TaskView(MaintenanceTask):
+    """A task plus the asset it belongs to, for the cross-asset task list."""
+
+    asset_id: str
+    asset_name: str
+    kind: TaskKind
+    days_until_due: int = Field(description="Negative means overdue")
+
+
+class TaskComplete(BaseModel):
+    completed_on: Optional[date] = Field(default=None, description="Defaults to today")
+    notes: str = ""
+
+
+class TaskSnooze(BaseModel):
+    days: int = Field(ge=1, le=365)
+
+
+class TaskCompleteResult(BaseModel):
+    completed: MaintenanceTask
+    next_task: Optional[MaintenanceTask] = Field(
+        default=None, description="Next occurrence, for recurring tasks"
+    )
+
+
+# --- Identify (photo -> new asset) -------------------------------------------
+
+
+class ScheduleSuggestion(BaseModel):
+    """What Gemma returns per maintenance item; becomes a MaintenanceSchedule."""
+
+    title: str
+    kind: ScheduleKind = "inspect"
+    frequency: Optional[str] = Field(default=None, description="In words, e.g. 'every 6 months'")
+    interval_days: int = Field(ge=1, le=3650)
+    priority: Severity = "medium"
+    notes: str = ""
+
+
+class IdentifiedItem(BaseModel):
+    """What Gemma must return when identifying equipment from a photo."""
+
+    name: str
+    category: str
+    environment: Environment = "household"
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
+    confidence: float = Field(ge=0, le=1)
+    maintenance_plan: list[ScheduleSuggestion] = []
+
+
+class Question(BaseModel):
+    target: str = Field(description="Where the answer goes in the draft, e.g. 'manufacturer' or 'schedules.0.last_done'")
+    prompt: str
+    type: Literal["text", "date"]
+    hint: Optional[str] = None
+    required: bool = False
+
+
+class IdentifyResult(BaseModel):
+    draft: AssetCreate = Field(description="Fill in the answers, then POST it to /api/assets")
+    questions: list[Question]
+    confidence: float
+    source: ResultSource
+
+
+# --- Manual finder -----------------------------------------------------------
+
+
+class ManualCandidate(BaseModel):
+    title: str
+    url: str
+    is_pdf: bool
+    score: int
+
+
+class ManualLinkRequest(BaseModel):
+    url: str = Field(pattern=r"^https?://")
+    download: bool = Field(default=True, description="Try to download the PDF and load it for Q&A")
+
+
+class FindManualResult(BaseModel):
+    asset_id: str
+    query: str
+    search_url: str = Field(description="Open in a browser if nothing was found automatically")
+    searched: bool = Field(description="False when no search provider is configured")
+    candidates: list[ManualCandidate] = []
+    manual_url: Optional[str] = Field(default=None, description="Link saved on the asset")
+    manual: Optional[ManualInfo] = Field(default=None, description="Downloaded and loaded for Q&A")
+    verified: bool = Field(default=False, description="Model number found inside the downloaded PDF")
+    message: str
+
+
+class PhotoImportResult(BaseModel):
+    matched: int
+    unmatched_files: list[str] = Field(default=[], description="Files whose name matched no asset code")
+    assets_without_photo: int
+
+
+# --- Assistant panel (frontend) ----------------------------------------------
+
+
+class AssistantQuery(BaseModel):
+    equipment_id: str
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class AssistantAnswer(BaseModel):
+    answer: str
+    source: ResultSource
+    pages_cited: list[int] = []
+    used_manual: Optional[str] = Field(default=None, description="Manual file the answer came from, if any")

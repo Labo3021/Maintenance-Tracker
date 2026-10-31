@@ -32,7 +32,7 @@ class Settings:
         self.backend_port = int(os.getenv("BACKEND_PORT", "8000"))
         self.cors_origins = [
             o.strip()
-            for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+            for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173").split(",")
             if o.strip()
         ]
 
@@ -45,6 +45,16 @@ class Settings:
         self.max_pdf_bytes = int(os.getenv("MAX_PDF_MB", "50")) * 1024 * 1024
         # ~4 chars/token, so 400k chars is roughly 100k tokens of manual text.
         self.max_manual_chars = int(os.getenv("MAX_MANUAL_CHARS", "400000"))
+
+        # Reminders: notify this many days before a task is due (overdue tasks always count).
+        self.remind_days_before = int(os.getenv("REMIND_DAYS_BEFORE", "3"))
+        # Hour of day (local) calendar alarms fire.
+        self.reminder_hour = int(os.getenv("REMINDER_HOUR", "9"))
+
+        # Manual finder. Searching sends only brand + model text, never photos.
+        # "none" = only save a search link; "brave" = Brave Search API (needs BRAVE_API_KEY).
+        self.search_provider = os.getenv("SEARCH_PROVIDER", "none").strip().lower()
+        self.brave_api_key = os.getenv("BRAVE_API_KEY", "").strip()
 
 
 settings = Settings()
