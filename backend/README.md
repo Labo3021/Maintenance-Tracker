@@ -39,11 +39,13 @@ backend/
 ├── api/
 │   ├── schemas.py     # Data contracts (Pydantic): the source of truth for payloads
 │   ├── routes.py      # All /api routes
-│   └── store.py       # JSON persistence, diagnosis -> task, alerts
+│   ├── store.py       # JSON persistence, diagnosis -> task, alerts
+│   └── importer.py    # CSV / Excel inventory import
 ├── ai/
 │   ├── gemma_client.py  # Ollama / Google AI Studio / mock behind one generate()
 │   ├── prompts.py       # Prompt templates
 │   ├── diagnose.py      # Photo -> validated DiagnosisResult (retry + fallback)
+│   ├── column_mapper.py # Gemma matches unfamiliar spreadsheet headers
 │   └── manuals.py       # PDF -> text, long-context Q&A
 ├── seed/mock_inventory.json  # Used until data/mock_inventory.json exists
 └── tests/             # pytest, runs in mock mode
@@ -55,6 +57,7 @@ backend/
 |---|---|---|
 | GET | `/api/assets?category=&status=` | List equipment |
 | POST | `/api/assets` | Add equipment |
+| POST | `/api/assets/import` | Import a legacy `.csv` / `.xlsx` inventory (see below) |
 | GET / PATCH / DELETE | `/api/assets/{id}` | Read, partially update, delete |
 | POST | `/api/assets/{id}/tasks` | Add a maintenance task |
 | PATCH | `/api/assets/{id}/tasks/{task_id}` | Update a task (e.g. `{"status": "done"}`) |
@@ -75,6 +78,35 @@ High severity marks the asset `needs_attention`; critical marks it `out_of_servi
 ```bash
 curl -F image=@gasket.jpg -F asset_id=asset-centrifuge-01 -F notes="lid seal cracked" \
   http://localhost:8000/api/diagnose
+```
+
+## Importing old inventories (CSV / Excel)
+
+`POST /api/assets/import` (multipart `file`) accepts `.csv` or `.xlsx`. Query options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `dry_run` | `false` | Parse and report without saving. Use it for a "this is what we understood" preview |
+| `mode` | `append` | `append`: add rows; rows whose serial number exists update that asset. `replace`: wipe inventory first |
+| `date_order` | `mdy` | How to read ambiguous dates like `05/10/2026` (`dmy` for day-first) |
+| `use_ai` | `true` | Ask Gemma about headers the alias list doesn't recognize |
+| `sheet` | first sheet | Excel sheet name |
+
+How it reads a file:
+- **Header row** = first row with 2+ filled cells, so title rows like "Lab Inventory 2019" are skipped.
+- **Columns** are matched by a list of common names first ("S/N", "Mfr", "Last PM", "Cal Due"...).
+  Leftovers go to Gemma with only the header and 3 sample values. Each column in the
+  response says whether it was matched by `alias`, `ai`, or left `unmapped`.
+- **Dates**: Excel dates, `2026-05-10`, `5/10/2026`, `Mar 3, 2026`, Excel serial numbers.
+- **Intervals**: numbers (unit taken from the header, e.g. "Interval (months)"), `6 months`, `annual`, `quarterly`...
+- **Status** words like "Working", "needs repair", "Broken", "OOS" map to the three statuses.
+- **Next-due dates**: with an interval, the last date is back-calculated; without one, an "(imported)" task is created.
+- **Parts** column (optional): `Name | part# | installed | lifespan; Name2` (only the name is required).
+- A row with no name, manufacturer or model is **skipped**. A bad value in any other column is a
+  **warning** and that value is ignored. Both are listed with Excel row numbers.
+
+```bash
+curl -F file=@old_inventory.xlsx "http://localhost:8000/api/assets/import?dry_run=true"
 ```
 
 ## Data

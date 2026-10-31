@@ -52,3 +52,20 @@ Respond with ONLY a JSON object, no other text:
 
 Question: {question}
 """
+
+COLUMN_MAPPING_PROMPT = """You are helping import an old laboratory equipment inventory spreadsheet.
+Match each spreadsheet column below to one of these asset fields, or null if none fits:
+
+{fields}
+
+Columns (header: up to 3 sample values):
+{columns}
+
+Rules:
+- Use each field at most once. Only use field names from the list above.
+- Judge by both the header and the sample values (e.g. dates vs. names vs. codes).
+- Use null for columns like notes, cost, owner, PO number, or anything not in the list.
+
+Respond with ONLY a JSON object, no other text:
+{{"mapping": {{"<column header>": "<field name or null>"}}}}
+"""

@@ -107,6 +107,36 @@ class InventoryStore:
             self._save()
             return asset
 
+    def import_assets(
+        self, rows: list[tuple[AssetCreate, list[TaskCreate]]], mode: str = "append"
+    ) -> tuple[int, int]:
+        """Bulk import. Rows whose serial number already exists update that asset
+        (only the columns present in the file); the rest are created. Returns (created, updated)."""
+        with self._lock:
+            if mode == "replace":
+                self._assets.clear()
+            by_serial = {a.serial_number.strip().lower(): a.id for a in self._assets.values() if a.serial_number}
+            created = updated = 0
+            for data, tasks in rows:
+                serial = (data.serial_number or "").strip().lower()
+                asset_id = by_serial.get(serial) if serial else None
+                if asset_id:
+                    existing = self._assets[asset_id]
+                    # Serials match case-insensitively; keep the stored spelling.
+                    merged = existing.model_dump() | data.model_dump(exclude_unset=True, exclude={"serial_number"})
+                    asset = Asset.model_validate(merged)
+                    updated += 1
+                else:
+                    asset = Asset(id=_new_id("asset"), **data.model_dump())
+                    if serial:
+                        by_serial[serial] = asset.id
+                    created += 1
+                for t in tasks:
+                    asset.tasks.append(MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), **t.model_dump()))
+                self._assets[asset.id] = asset
+            self._save()
+            return created, updated
+
     def delete(self, asset_id: str) -> bool:
         with self._lock:
             if self._assets.pop(asset_id, None) is None:

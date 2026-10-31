@@ -184,3 +184,38 @@ class ManualAnswer(BaseModel):
     answer: str
     pages_cited: list[int] = []
     source: ResultSource
+
+
+# --- Inventory import (CSV / Excel) ------------------------------------------
+
+ImportMode = Literal["append", "replace"]
+MappingMethod = Literal["alias", "ai", "unmapped"]
+
+
+class ColumnMapping(BaseModel):
+    header: str
+    field: Optional[str] = Field(description="Asset field this column fills, or null if ignored")
+    method: MappingMethod
+
+
+class ImportIssue(BaseModel):
+    row: int = Field(description="Spreadsheet row number, as shown in Excel")
+    message: str
+
+
+class ImportResult(BaseModel):
+    dry_run: bool
+    mode: ImportMode
+    file_type: Literal["csv", "xlsx"]
+    sheet: Optional[str] = None
+    header_row: int
+    columns: list[ColumnMapping]
+    ai_mapping: ResultSource | Literal["not_needed", "disabled"] = Field(
+        description="How unmatched headers were handled: model/mock/fallback, not_needed, or disabled"
+    )
+    total_rows: int
+    created: int = Field(description="New assets (would be created, on a dry run)")
+    updated: int = Field(description="Existing assets matched by serial number")
+    skipped: list[ImportIssue] = []
+    warnings: list[ImportIssue] = []
+    preview: list[AssetCreate] = Field(default=[], description="First parsed rows, to show before confirming")

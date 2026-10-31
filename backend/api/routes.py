@@ -1,6 +1,6 @@
 """REST routes. Handlers are plain `def` so FastAPI runs slow model calls in a threadpool."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
@@ -8,6 +8,7 @@ from ai import manuals
 from ai.diagnose import diagnose_image
 from config import settings
 
+from . import importer
 from .schemas import (
     Alert,
     Asset,
@@ -15,6 +16,8 @@ from .schemas import (
     AssetStatus,
     AssetUpdate,
     DiagnoseResponse,
+    ImportMode,
+    ImportResult,
     MaintenanceTask,
     ManualAnswer,
     ManualInfo,
@@ -47,6 +50,30 @@ def list_assets(category: Optional[str] = None, status: Optional[AssetStatus] = 
 @router.post("/assets", response_model=Asset, status_code=201, tags=["assets"])
 def create_asset(body: AssetCreate):
     return store.create(body)
+
+
+@router.post("/assets/import", response_model=ImportResult, tags=["assets"])
+def import_assets(
+    file: UploadFile = File(..., description="Inventory spreadsheet: .csv or .xlsx"),
+    mode: ImportMode = Query("append", description="append: add/update by serial number. replace: wipe inventory first"),
+    dry_run: bool = Query(False, description="Parse and report without saving; use for a preview step"),
+    date_order: Literal["mdy", "dmy"] = Query("mdy", description="How to read ambiguous dates like 05/10/2026"),
+    use_ai: bool = Query(True, description="Ask Gemma to match column headers the alias list doesn't know"),
+    sheet: Optional[str] = Query(None, description="Excel sheet name; defaults to the first sheet"),
+):
+    """Import a legacy inventory. Rows that can't be parsed are skipped and listed, not fatal."""
+    data = file.file.read()
+    if not data:
+        raise HTTPException(400, "File is empty")
+    if len(data) > settings.max_pdf_bytes:
+        raise HTTPException(413, "File is too large")
+    try:
+        return importer.import_inventory(
+            file.filename or "inventory.csv", data,
+            mode=mode, dry_run=dry_run, date_order=date_order, use_ai=use_ai, sheet=sheet,
+        )
+    except importer.ImportFileError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/assets/{asset_id}", response_model=Asset, tags=["assets"])
