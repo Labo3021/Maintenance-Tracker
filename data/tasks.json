@@ -1,0 +1,23 @@
+[
+  {
+    "id": "task_101",
+    "title": "Air Filter",
+    "location": "Hallway Ceiling Vent",
+    "category": "HVAC",
+    "severity": "High",
+    "installedDate": "2026-11-05",
+    "replaceEveryDays": 90,
+    "difficulty": "Easy",
+    "estimatedTime": 5,
+    "itemModel": "Filtrete 20x25x1 MPR 1500",
+    "toolsNeeded": ["Step Ladder"],
+    "videoURL": null,
+    "repairSteps": [
+      "Turn off the main water shutoff valve.",
+      "Place a bucket under the leaking pipe to catch excess water.",
+      "Unscrew the valve using an adjustable wrench."
+    ],
+    "purchaseURL": null,
+    "notes": "Diagnosed via Gemma 4 visual scanner."
+  }
+]

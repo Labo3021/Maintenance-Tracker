@@ -21,6 +21,9 @@ const paths = {
   undo: 'M4 10h10a6 6 0 0 1 0 12 M4 10l5-5 M4 10l5 5',
   camera: 'M4 7h3l2-3h6l2 3h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   image: 'M3 4h18v16H3z M8 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2z M3 17l5-5 4 4 3-3 6 6'
+  undo: 'M4 10h10a6 6 0 0 1 0 12 M4 10l5-5 M4 10l5 5',
+  camera: 'M4 7h3l2-3h6l2 3h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  image: 'M3 4h18v16H3z M8 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2z M3 17l5-5 4 4 3-3 6 6'
 };
 function Icon({name, size = 20}) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] || paths.box}/></svg>;
@@ -61,6 +64,7 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
         <label>Task title<input autoFocus name="title" required maxLength={140} placeholder="e.g. Check the product manual"/></label>
         <div className="form-grid"><label>Equipment<select name="equipment_id" defaultValue={selectedId || equipment[0]?.id} required>{equipment.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Due date<input type="date" name="due_date" required defaultValue={localDate()}/></label></div>
         <label>Repeat reminder<select name="recurrence" defaultValue="none"><option value="none">One time</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Every 3 months</option></select></label>
+        <label>Repeat reminder<select name="recurrence" defaultValue="none"><option value="none">One time</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Every 3 months</option></select></label>
         <label>Notes<textarea name="notes" rows={3} maxLength={1000} placeholder="Any details you want to remember"/></label>
       </>}
       {error && <p role="alert" className="form-error">{error}</p>}
@@ -75,15 +79,20 @@ function Assistant({equipment}) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [photo, setPhoto] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [photo, setPhoto] = useState(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const controller = useRef(null);
+  const photoUrls = useRef(new Set());
+  useEffect(() => () => { for (const url of photoUrls.current) URL.revokeObjectURL(url); }, []);
   const photoUrls = useRef(new Set());
   useEffect(() => () => { for (const url of photoUrls.current) URL.revokeObjectURL(url); }, []);
   useEffect(() => {
     if (!equipment.some(item => item.id === equipmentId)) setEquipmentId(equipment[0]?.id || '');
   }, [equipment, equipmentId]);
   useEffect(() => {
+    controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false);
     controller.current?.abort(); controller.current = null; setMessages([]); setError(''); setPending(false);
     return () => controller.current?.abort();
   }, [equipmentId]);
@@ -108,8 +117,30 @@ function Assistant({equipment}) {
     }
     setPhoto(null);
   }
+  function attachPhoto(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      setError('Choose a JPG, PNG, or WebP photo under 10 MB.');
+      return;
+    }
+    if (photo && !messages.some(entry => entry.photoUrl === photo.url)) {
+      URL.revokeObjectURL(photo.url); photoUrls.current.delete(photo.url);
+    }
+    const url = URL.createObjectURL(file);
+    photoUrls.current.add(url);
+    setPhoto({file, url}); setError('');
+  }
+  function removePhoto() {
+    if (photo && !messages.some(entry => entry.photoUrl === photo.url)) {
+      URL.revokeObjectURL(photo.url); photoUrls.current.delete(photo.url);
+    }
+    setPhoto(null);
+  }
   async function submit(event) {
     event.preventDefault();
+    if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
     if (pending || !API_BASE || (!message.trim() && !photo) || !equipmentId) return;
     const active = new AbortController(); controller.current = active;
     const timeout = setTimeout(() => active.abort(), photo ? 90000 : 30000); // looking at a photo takes the model longer
@@ -120,6 +151,8 @@ function Assistant({equipment}) {
     try {
       const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
       if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
+      const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
+      if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
     }
     catch (issue) {if (controller.current === active) setError(issue.name === 'AbortError' ? 'The request timed out. Please try again.' : issue.message);}
     finally {clearTimeout(timeout); if (controller.current === active) setPending(false);}
@@ -128,7 +161,13 @@ function Assistant({equipment}) {
     <div className="assistant-symbol"><Icon name="sparkle" size={25}/></div>
     <p className="eyebrow">A LITTLE HELP, WHEN YOU NEED IT</p><h2 id="assistant-title">Care made clearer.</h2>
     <p className="assistant-copy">Share a photo and describe what you notice. Your maintenance assistant can help you find the next step.</p>
+    <p className="assistant-copy">Share a photo and describe what you notice. Your maintenance assistant can help you find the next step.</p>
     <span className={`connection ${API_BASE ? 'ready' : ''}`}><span/>{API_BASE ? 'Backend configured' : 'AI connection pending'}</span>
+    <div className="chat-log" role="log" aria-label="Diagnostic conversation" aria-live="polite">
+      {messages.length ? messages.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}><strong>{entry.role === 'user' ? 'You' : 'Maintenance assistant'}</strong>{entry.photoUrl && <img src={entry.photoUrl} alt="Photo attached to your question"/>}{entry.text && <p>{entry.text}</p>}</div>)
+        : <p className="chat-empty">Your diagnostic conversation will appear here. A photo is optional.</p>}
+      {pending && <p className="chat-pending">Thinking about your question...</p>}
+    </div>
     <div className="chat-log" role="log" aria-label="Diagnostic conversation" aria-live="polite">
       {messages.length ? messages.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}><strong>{entry.role === 'user' ? 'You' : 'Maintenance assistant'}</strong>{entry.photoUrl && <img src={entry.photoUrl} alt="Photo attached to your question"/>}{entry.text && <p>{entry.text}</p>}</div>)
         : <p className="chat-empty">Your diagnostic conversation will appear here. A photo is optional.</p>}
@@ -140,7 +179,12 @@ function Assistant({equipment}) {
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
       <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
+      {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
+      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
     </form>
+    {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
+    <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
     {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
     <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
   </aside>;
