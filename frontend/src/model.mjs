@@ -66,7 +66,7 @@ export function validateState(data) {
   const ids = new Set();
   for (const item of data.equipment) {
     if (!item || !nonempty(item.id) || ids.has(item.id) || !nonempty(item.name)) return false;
-    if (!['appliance', 'bicycle', 'tool', 'other'].includes(item.category)) return false;
+    if (!nonempty(item.category)) return false;
     if (!['model', 'manufacturer', 'location'].every(key => typeof item[key] === 'string')) return false;
     if (!validDate(item.added_on)) return false;
     ids.add(item.id);
@@ -138,7 +138,7 @@ export function createEquipment(fields, today = localDate(), id = crypto.randomU
   const name = fields.name?.trim();
   if (!name || name.length > 100) throw new Error('Enter an equipment name (1–100 characters).');
   const category = fields.category;
-  if (!['appliance', 'bicycle', 'tool', 'other'].includes(category)) throw new Error('Choose a category.');
+  if (!nonempty(category) || category.length > 60) throw new Error('Enter a category (1–60 characters).');
   return {id, name, category, manufacturer: fields.manufacturer?.trim() ?? '', model: fields.model?.trim() ?? '', location: fields.location?.trim() ?? '', added_on: today};
 }
 

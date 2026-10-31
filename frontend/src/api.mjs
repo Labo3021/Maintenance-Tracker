@@ -32,8 +32,8 @@ export async function askAssistant(baseUrl, equipmentId, message, {image, signal
   }
   const response = await request(endpoint(baseUrl, '/assistant'), {
     method: 'POST',
-    ...(image ? {} : {headers: {'Content-Type': 'application/json'}}),
-    body,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({equipment_id: equipmentId, message}),
     signal
   });
   if (!response.ok) throw new Error(`The assistant could not respond (${response.status}). Please try again.`);

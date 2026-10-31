@@ -55,7 +55,7 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
     <form onSubmit={submit}>
       {isEquipment ? <>
         <label>Equipment name<input autoFocus name="name" required maxLength={100} placeholder="e.g. Workshop drill"/></label>
-        <div className="form-grid"><label>Category<select name="category" defaultValue="appliance"><option value="appliance">Appliance</option><option value="bicycle">Bicycle</option><option value="tool">Tool</option><option value="other">Other</option></select></label><label>Location<input name="location" maxLength={100} placeholder="e.g. Garage"/></label></div>
+        <div className="form-grid"><label>Category<input name="category" list="categories" defaultValue="appliance" required maxLength={60}/><datalist id="categories"><option value="appliance"/><option value="bicycle"/><option value="tool"/><option value="kit"/><option value="centrifuge"/><option value="other"/></datalist></label><label>Location<input name="location" maxLength={100} placeholder="e.g. Garage"/></label></div>
         <div className="form-grid"><label>Manufacturer<input name="manufacturer" maxLength={100} placeholder="Optional"/></label><label>Model<input name="model" maxLength={100} placeholder="Optional"/></label></div>
       </> : <>
         <label>Task title<input autoFocus name="title" required maxLength={140} placeholder="e.g. Check the product manual"/></label>
@@ -64,8 +64,8 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
         <label>Notes<textarea name="notes" rows={3} maxLength={1000} placeholder="Any details you want to remember"/></label>
       </>}
       {error && <p role="alert" className="form-error">{error}</p>}
-      <p className="form-hint">{API_BASE ? 'Saved to the shared backend.' : 'Saved in this browser. Shared team storage is not connected yet.'}</p>
-      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
+      <p className="form-hint">{API_BASE ? 'Saved to the shared backend.' : 'Saved in this browser.'}</p>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Saving…' : isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
     </form>
   </dialog>;
 }
@@ -201,8 +201,14 @@ function Assistant({equipment, onManualUploaded}) {
     setMessages(previous => [...previous, {role: 'user', text: sentMessage, photoUrl: sentPhoto?.url}]);
     setMessage(''); setPhoto(null); setPending(true); setError('');
     try {
-      const response = await askAssistant(API_BASE, equipmentId, sentMessage, {image: sentPhoto?.file, signal: active.signal});
-      if (controller.current === active && !active.signal.aborted) setMessages(previous => [...previous, {role: 'assistant', text: response}]);
+      const response = sentPhoto
+        ? await diagnosePhoto(API_BASE, sentPhoto.file, equipmentId, sentMessage, {signal: active.signal})
+        : await askAssistant(API_BASE, equipmentId, sentMessage, {signal: active.signal});
+      if (controller.current === active && !active.signal.aborted) {
+        const text = sentPhoto ? `${response.source === 'fallback' ? 'AI unavailable; generic advice. ' : ''}${response.diagnosis.issue} (${response.diagnosis.severity}). ${response.diagnosis.steps?.map(step => step.instruction).join(' ') || ''}${response.task ? ` Added to schedule, due ${response.task.due_date}.` : ''}` : response;
+        setMessages(previous => [...previous, {role: 'assistant', text}]);
+        if (response.task) await onTaskAdded();
+      }
     }
     catch (issue) {if (controller.current === active) setError(issue.name === 'AbortError' ? 'The request timed out. Please try again.' : issue.message);}
     finally {clearTimeout(timeout); if (controller.current === active) setPending(false);}
@@ -224,9 +230,9 @@ function Assistant({equipment, onManualUploaded}) {
       <label>Your question<textarea value={message} onChange={event => setMessage(event.target.value)} rows={3} maxLength={2000} placeholder="What should I check before using this?"/></label>
       <div className="photo-actions"><label className="photo-button"><Icon name="image" size={15}/>Upload photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={attachPhoto} aria-label="Upload a photo"/></label><label className="photo-button"><Icon name="camera" size={15}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={attachPhoto} aria-label="Take a photo"/></label></div>
       {photo && <div className="photo-preview"><img src={photo.url} alt="Selected attachment preview"/><span>{photo.file.name}</span><button type="button" onClick={removePhoto} aria-label="Remove selected photo"><Icon name="close" size={16}/></button></div>}
-      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? 'Asking assistant...' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
+      <button type="submit" className="button primary full" disabled={!API_BASE || pending || (!message.trim() && !photo) || !equipmentId}>{pending ? <><span className="spinner"/>Working…</> : photo ? 'Diagnose photo' : 'Ask assistant'}<Icon name="arrow" size={17}/></button>
     </form>
-    {!API_BASE && <p className="form-hint">Photo preview works locally. Sending a diagnosis becomes available when the backend is connected.</p>}
+    {!API_BASE && <p className="form-hint">Photo preview works locally. Connect the backend to diagnose.</p>}
     <div aria-live="polite" aria-busy={pending}>{error && <p className="form-error" role="alert">{error}</p>}{messages.some(entry => entry.role === 'assistant') && <p className="form-hint">AI suggestions may be inaccurate. Check the actual product manual.</p>}</div>
   </aside>;
 }
@@ -249,6 +255,7 @@ export default function App() {
     const warning = saveState(storage, data); if (warning) setStorageWarning(warning);
   }, [data]);
   async function refresh() {
+    if (!API_BASE) return;
     try {setData(await loadWorkspace(API_BASE)); setStorageWarning('');}
     catch (issue) {setStorageWarning(`Could not load data from the backend: ${issue.message}`);}
     finally {setLoading(false);}
@@ -276,10 +283,22 @@ export default function App() {
   function navigate(next) {setView(next); setSelectedId(''); setQuery(''); setFilter('open');}
   async function complete(task) {
     if (API_BASE) {
-      try {await completeTask(API_BASE, task); await refresh();}
-      catch (issue) {setStorageWarning(issue.message); return;}
-    } else setData(previous => toggleTask(previous, task.id, today));
-    setAnnouncement(`${task.title}: ${task.completed_at ? 'reopened' : 'completed'}.`);
+      try {
+        const result = await completeBackendTask(API_BASE, task);
+        await refresh();
+        setAnnouncement(task.completed_at ? `${task.title} reopened.` : result?.next_task ? `Done. Next one due ${result.next_task.due_date}.` : `${task.title} completed.`);
+      } catch (issue) {setStorageWarning(issue.message);}
+    } else {
+      setData(previous => toggleTask(previous, task.id, today));
+      setAnnouncement(`${task.title}: ${task.completed_at ? 'reopened' : 'completed'}.`);
+    }
+  }
+  async function snooze(task) {
+    try {
+      await snoozeTask(API_BASE, task.id, 3);
+      await refresh();
+      setAnnouncement(`${task.title} snoozed for 3 days.`);
+    } catch (issue) {setStorageWarning(issue.message);}
   }
   async function save(item) {
     if (API_BASE) {
@@ -302,7 +321,7 @@ export default function App() {
     <aside className="sidebar">
       <a className="brand" href="#" onClick={event => {event.preventDefault(); navigate('Overview');}}><span className="brand-mark"><Icon name="check" size={26}/></span><span>Maintenance<span className="brand-sub">TRACKER</span></span></a>
       <p className="nav-label">YOUR WORKSPACE</p>
-      <nav aria-label="Main navigation">{[['Overview', 'grid'], ['Equipment', 'box'], ['Maintenance', 'list'], ['History', 'clock']].map(([label, icon]) => <button key={label} className={`nav-item ${view === label ? 'active' : ''}`} aria-current={view === label ? 'page' : undefined} onClick={() => navigate(label)}><Icon name={icon}/>{label}{label === 'Maintenance' && overdue + dueToday > 0 && <span className="nav-count">{overdue + dueToday}</span>}</button>)}</nav>
+      <nav aria-label="Main navigation">{[['Overview', 'grid'], ['Diagnose', 'camera'], ['Equipment', 'box'], ['Maintenance', 'list'], ['History', 'clock']].map(([label, icon]) => <button key={label} className={`nav-item ${view === label ? 'active' : ''}`} aria-current={view === label ? 'page' : undefined} onClick={() => navigate(label)}><Icon name={icon}/>{label}{label === 'Maintenance' && overdue + dueToday > 0 && <span className="nav-count">{overdue + dueToday}</span>}</button>)}</nav>
       <div className="sidebar-note"><span className="little-leaf">↗</span><h3>Small care.<br/>Longer life.</h3><p>A little maintenance goes a long way.</p></div>
       <div className="sidebar-bottom"><span className="avatar">MT</span><div><strong>My workspace</strong><span>Local demo</span></div></div>
     </aside>
@@ -314,6 +333,10 @@ export default function App() {
         : <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>}
       {sources.length > 1 && <div className="source-filter" role="group" aria-label="Choose an inventory">{[{source: '', label: 'All inventories', count: data.equipment.length}, ...sources].map(entry => <button key={entry.source || 'all'} aria-pressed={source === entry.source} className={source === entry.source ? 'active' : ''} onClick={() => {setSource(entry.source); setSelectedId('');}}>{entry.label}<span>{entry.count}</span></button>)}</div>}
       {storageWarning && <div className="storage-warning" role="alert">{storageWarning}<button className="icon-button" onClick={() => setStorageWarning('')} aria-label="Dismiss storage notice"><Icon name="close" size={16}/></button></div>}
+      {announcement && <div className="scheduled-notice app-notice" role="status">{announcement}<button className="icon-button" aria-label="Dismiss notice" onClick={() => setAnnouncement('')}><Icon name="close" size={15}/></button></div>}
+      {view === 'Diagnose' && <DiagnoseScreen base={API_BASE} equipment={data.equipment} onTaskAdded={refresh}/>}
+      {view === 'Equipment' && <IdentifyScreen base={API_BASE} onSaved={refresh}/>}
+      {view !== 'Diagnose' && <>
       <section className="stats" aria-label="Maintenance summary">{[
         {label: 'Equipment tracked', value: scoped.equipment.length, detail: source ? sourceLabel(source) : 'All in one place', icon: 'box', action: () => navigate('Equipment')},
         {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
@@ -323,7 +346,7 @@ export default function App() {
       {(view === 'Overview' || view === 'Equipment') && <section className="equipment-grid" aria-label="Equipment">{visibleEquipment.map((item, index) => {
         const tasks = data.tasks.filter(task => task.equipment_id === item.id && !task.completed_at);
         const needsAttention = tasks.some(task => taskStatus(task, today) === 'overdue');
-        return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span><EquipmentArt item={item} index={index}/></div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
+        return <button key={item.id} className={`equipment-card panel art-${index % 3} ${selectedId === item.id ? 'selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => {setSelectedId(selectedId === item.id ? '' : item.id); setFilter('open');}}><div className="equipment-art"><span className="category">{item.category}</span>{item.photo_url ? <img src={item.photo_url} alt={item.name} className="equipment-photo"/> : <EquipmentArt item={item} index={index}/>}</div><div className="equipment-body"><h3>{item.name}</h3><p>{[item.manufacturer, item.model].filter(Boolean).join(' · ') || 'Model not specified'}</p><div className="equipment-meta"><span><Icon name="pin" size={13}/>{item.location || 'No location'}</span><span className={`small-status ${needsAttention ? 'attention' : ''}`}>{needsAttention ? 'Needs attention' : `${tasks.length} open ${tasks.length === 1 ? 'task' : 'tasks'}`}</span></div></div></button>;
       })}{!visibleEquipment.length && <div className="empty panel"><Icon name="box" size={30}/><h3>{query ? 'No matching equipment' : 'Start with one piece of equipment'}</h3><p>{query ? 'Try another name, model, or location.' : 'Add something you want to keep in good shape.'}</p>{!query && <button className="button primary" onClick={() => setModal('equipment')}>Add equipment</button>}</div>}</section>}
       {(view === 'Overview' || view === 'Equipment') && selected && hasDetails(selected) && <ItemDetails item={selected} onClose={() => setSelectedId('')}/>}
       <div className="workspace-columns"><section className="task-panel panel" aria-labelledby="tasks-title">
