@@ -441,6 +441,7 @@ def import_inventory(
     use_ai: bool = True,
     sheet: Optional[str] = None,
     stock_count_days: int = 180,
+    source: Optional[str] = None,
 ) -> ImportResult:
     name = filename.lower()
     if name.endswith(".csv") or name.endswith(".txt"):
@@ -476,7 +477,13 @@ def import_inventory(
         except ValueError as e:
             skipped.append(ImportIssue(row=row_no, message=str(e)))
 
+    if source:
+        for asset, _ in parsed:
+            asset.source = source
     kits = _kit_assets([a for a, _ in parsed], stock_count_days)
+    if source:
+        for kit in kits:
+            kit.source = source
     rows_to_save = parsed + [(k, []) for k in kits]
 
     if dry_run:

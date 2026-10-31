@@ -23,7 +23,7 @@ def load_folder(folder: Path) -> dict:
     summary = {"folder": folder.name, "imported": 0, "skipped_rows": 0, "photos": 0, "errors": []}
     for sheet in sorted(p for p in folder.rglob("*") if p.suffix.lower() in SHEET_EXTS and not p.name.startswith("~$")):
         try:
-            result = importer.import_inventory(sheet.name, sheet.read_bytes(), use_ai=False)
+            result = importer.import_inventory(sheet.name, sheet.read_bytes(), use_ai=False, source=folder.name)
             summary["imported"] += result.created + result.updated
             summary["skipped_rows"] += len(result.skipped)
         except importer.ImportFileError as e:

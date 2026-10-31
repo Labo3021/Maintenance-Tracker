@@ -73,3 +73,28 @@ def test_private_folder_loader(client, tmp_path):
     assert by_code["PRIV-1"]["quantity_missing"] == 3 and by_code["PRIV-1"]["photo_url"]
     assert by_code["kit:kit-x"]["category"] == "kit"
     assert sources.load_private(tmp_path / "nope") == []
+
+
+def test_source_filter_and_import_source(client):
+    csv = "Name,Code\nDrill,SRC-1\nSaw,SRC-2\n"
+    r = client.post("/api/assets/import", params={"use_ai": False}, files={"file": ("garage tools.csv", csv, "text/csv")})
+    assert r.status_code == 200
+    named = client.post("/api/assets/import", params={"use_ai": False, "source": "workshop"},
+                        files={"file": ("x.csv", "Name,Code\nVise,SRC-3\n", "text/csv")})
+    assert named.status_code == 200
+    assert {a["code"] for a in client.get("/api/assets", params={"source": "garage tools"}).json()} == {"SRC-1", "SRC-2"}
+    assert [a["code"] for a in client.get("/api/assets", params={"source": "workshop"}).json()] == ["SRC-3"]
+    sources = {s["source"]: s["count"] for s in client.get("/api/sources").json()}
+    assert sources["garage tools"] == 2 and sources["workshop"] == 1
+
+
+def test_photo_batch_saves_once(client, monkeypatch):
+    from api.store import store
+    client.post("/api/assets/import", params={"use_ai": False},
+                files={"file": ("b.csv", "Name,Code\nA,BATCH-1\nB,BATCH-2\nC,BATCH-3\n", "text/csv")})
+    saves = []
+    original = store._save
+    monkeypatch.setattr(store, "_save", lambda: saves.append(1) or original())
+    files = [(f"BATCH-{i}.jpg", 10, lambda: b"\xff\xd8\xff" + b"0" * 7) for i in (1, 2, 3)]
+    assert store.attach_photos_by_code(files, 10_000) == (3, [])
+    assert len(saves) == 1

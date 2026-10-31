@@ -8,6 +8,7 @@ All writes go to storage/inventory.json so data/ is never modified.
 import json
 import re
 import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -107,7 +108,16 @@ class InventoryStore:
         data = {"assets": [a.model_dump(mode="json") for a in self._assets.values()]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        # On Windows the replace fails while another process (antivirus, indexer, an editor)
+        # briefly has the file open; wait a moment and retry instead of losing the write.
+        for attempt in range(10):
+            try:
+                tmp.replace(self.path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
 
     # --- assets ---
 
@@ -184,7 +194,7 @@ class InventoryStore:
     def photo_dir(self) -> Path:
         return self.path.parent / "photos"
 
-    def set_photo(self, asset_id: str, data: bytes, ext: str) -> Optional[Asset]:
+    def set_photo(self, asset_id: str, data: bytes, ext: str, save: bool = True) -> Optional[Asset]:
         with self._lock:
             asset = self._assets.get(asset_id)
             if asset is None:
@@ -196,7 +206,8 @@ class InventoryStore:
             (self.photo_dir / name).write_bytes(data)
             asset = asset.model_copy(update={"photo": name})
             self._assets[asset_id] = asset
-            self._save()
+            if save:
+                self._save()
             return asset
 
     def attach_photos_by_code(
@@ -209,13 +220,16 @@ class InventoryStore:
         by_code = {key(a.code): a.id for a in self._snapshot() if a.code}
         done: set[str] = set()
         unmatched: list[str] = []
-        for name, size, read in sorted(files, key=lambda f: (Path(f[0]).suffix.lower() != ".jpg", f[0])):
-            asset_id = by_code.get(key(Path(name).stem))
-            if asset_id is None:
-                unmatched.append(name)
-            elif asset_id not in done and size <= max_bytes:
-                self.set_photo(asset_id, read(), Path(name).suffix.lower())
-                done.add(asset_id)
+        with self._lock:
+            for name, size, read in sorted(files, key=lambda f: (Path(f[0]).suffix.lower() != ".jpg", f[0])):
+                asset_id = by_code.get(key(Path(name).stem))
+                if asset_id is None:
+                    unmatched.append(name)
+                elif asset_id not in done and size <= max_bytes:
+                    self.set_photo(asset_id, read(), Path(name).suffix.lower(), save=False)
+                    done.add(asset_id)
+            if done:
+                self._save()  # once for the whole batch, not once per photo
         return len(done), unmatched
 
     def photo_path(self, asset_id: str) -> Optional[Path]:
@@ -405,7 +419,7 @@ class InventoryStore:
 store = InventoryStore(
     path=settings.storage_dir / "inventory.json",
     seeds=[
-        (BACKEND_DIR / "seed" / "mock_inventory.json", {"environment": "lab"}),        # demo lab instruments
-        (settings.data_dir / "mock_inventory.json", {"environment": "household"}),     # data/: household tasks
+        (BACKEND_DIR / "seed" / "mock_inventory.json", {"environment": "lab", "source": "lab-demo"}),
+        (settings.data_dir / "mock_inventory.json", {"environment": "household", "source": "home"}),
     ],
 )

@@ -56,8 +56,40 @@ export function toEquipment(asset, baseUrl) {
     location: asset.location || '',
     added_on: '',
     photo_url: asset.photo_url ? new URL(asset.photo_url, baseUrl).href : '',
-    missing: asset.quantity_missing || 0
+    missing: asset.quantity_missing || 0,
+    source: asset.source || 'other'
   };
+}
+
+// Friendly names for the backend's inventory sources; anything else shows as typed.
+const SOURCE_LABELS = {home: 'Home', 'lab-demo': 'Lab demo', uda: 'UDA', other: 'Other'};
+
+export function sourceLabel(source) {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+export function listSources(equipment) {
+  const counts = new Map();
+  for (const item of equipment) counts.set(item.source, (counts.get(item.source) || 0) + 1);
+  return [...counts].map(([source, count]) => ({source, count, label: sourceLabel(source)}))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// Spreadsheet import (.csv / .xlsx). dryRun previews without saving.
+export function importInventory(baseUrl, file, {source = '', dryRun = false, signal, request = fetch} = {}) {
+  if (!baseUrl) throw new Error('The backend is not connected yet.');
+  const body = new FormData();
+  body.append('file', file, file.name);
+  const params = new URLSearchParams({dry_run: String(dryRun)});
+  if (source.trim()) params.set('source', source.trim());
+  return request(endpoint(baseUrl, `/assets/import?${params}`), {method: 'POST', body, signal}).then(async response => {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof result.detail === 'string' ? result.detail : `The import failed (${response.status}).`;
+      throw new Error(detail);
+    }
+    return result;
+  });
 }
 
 // The UI's reminder choices, in days, as the backend's repeat interval.
@@ -100,9 +132,10 @@ export function completeTask(baseUrl, task, options) {
 }
 
 export function addEquipment(baseUrl, item, options) {
-  const {name, category, manufacturer, model, location} = item;
+  const {name, category, manufacturer, model, location, source} = item;
   return call(baseUrl, '/assets', {...options, method: 'POST', body: {
-    name, category, manufacturer: manufacturer || null, model: model || null, location: location || null
+    name, category, manufacturer: manufacturer || null, model: model || null, location: location || null,
+    source: source || null
   }});
 }
 

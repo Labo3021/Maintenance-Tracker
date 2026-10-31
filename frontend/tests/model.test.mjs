@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, nextRecurringDate, saveState, selectTasks, shiftDate, STORAGE_KEY, taskStatus, toggleTask, validDate, validateState} from '../src/model.mjs';
-import {addTask, askAssistant, completeTask, loadWorkspace, toEquipment, toTask} from '../src/api.mjs';
+import {addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel, toEquipment, toTask} from '../src/api.mjs';
 
 const today = '2026-10-31';
 
@@ -128,7 +128,7 @@ test('backend assets and tasks map to the frontend shapes', () => {
   const item = toEquipment({id: 'a1', name: 'Polea', category: 'general', code: '02360.00', manufacturer: null,
     model: null, location: 'Estante 1', photo_url: '/api/assets/a1/photo', quantity_missing: 7}, 'http://127.0.0.1:8000/api');
   assert.deepEqual(item, {id: 'a1', name: 'Polea', category: 'general', manufacturer: '', model: '02360.00',
-    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7});
+    location: 'Estante 1', added_on: '', photo_url: 'http://127.0.0.1:8000/api/assets/a1/photo', missing: 7, source: 'other'});
   const open = toTask({id: 't1', asset_id: 'a1', title: 'Missing 7 units: Polea', due_date: '2026-10-31', status: 'open',
     description: 'Counted 5 of 12.', notes: '', priority: 'medium', kind: 'stock'});
   assert.equal(open.equipment_id, 'a1');
@@ -186,4 +186,32 @@ test('recurring tasks map to and from the backend', async () => {
   await addTask('http://h/api', {equipment_id: 'a', title: 'Once', due_date: '2026-11-01', notes: '', recurrence: 'none'}, {request});
   assert.equal(sent[0].repeat_every_days, 91);
   assert.equal(sent[1].repeat_every_days, null);
+});
+
+test('inventory sources are listed with friendly names and stock images resolve to the server root', () => {
+  const equipment = [{source: 'uda'}, {source: 'home'}, {source: 'uda'}, {source: 'Garage tools'}];
+  assert.deepEqual(listSources(equipment), [
+    {source: 'Garage tools', count: 1, label: 'Garage tools'},
+    {source: 'home', count: 1, label: 'Home'},
+    {source: 'uda', count: 2, label: 'UDA'}
+  ]);
+  assert.equal(sourceLabel('lab-demo'), 'Lab demo');
+  const item = toEquipment({id: 'a', name: 'Smoke detector', source: 'home', photo_url: '/demo_assets/parts/task_202.jpg'}, 'http://127.0.0.1:8000/api');
+  assert.equal(item.photo_url, 'http://127.0.0.1:8000/demo_assets/parts/task_202.jpg');
+  assert.equal(item.source, 'home');
+});
+
+test('inventory import sends the file with preview and name options', async () => {
+  let captured;
+  const file = new File(['Name,Code\nDrill,D1\n'], 'garage.csv', {type: 'text/csv'});
+  const result = await importInventory('http://h/api', file, {source: ' Garage ', dryRun: true, request: async (url, options) => {
+    captured = {url, options};
+    return {ok: true, json: async () => ({created: 1, updated: 0})};
+  }});
+  assert.equal(result.created, 1);
+  assert.equal(captured.url, 'http://h/api/assets/import?dry_run=true&source=Garage');
+  assert.equal(captured.options.method, 'POST');
+  assert.equal(captured.options.body.get('file').name, 'garage.csv');
+  await assert.rejects(importInventory('http://h/api', file, {request: async () => ({ok: false, status: 422, json: async () => ({detail: 'Upload a .csv or .xlsx file'})})}), /Upload a \.csv/);
+  assert.throws(() => importInventory('', file), /not connected/);
 });

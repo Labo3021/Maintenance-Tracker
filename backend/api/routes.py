@@ -64,8 +64,18 @@ def _asset_or_404(asset_id: str) -> Asset:
 
 
 @router.get("/assets", response_model=list[Asset], tags=["assets"])
-def list_assets(category: Optional[str] = None, status: Optional[AssetStatus] = None):
-    return store.list_assets(category=category, status=status)
+def list_assets(category: Optional[str] = None, status: Optional[AssetStatus] = None, source: Optional[str] = None):
+    assets = store.list_assets(category=category, status=status)
+    return [a for a in assets if a.source == source] if source else assets
+
+
+@router.get("/sources", tags=["assets"])
+def list_sources():
+    """Datasets in the inventory with item counts, for a filter menu."""
+    counts: dict[str, int] = {}
+    for a in store.list_assets():
+        counts[a.source or "other"] = counts.get(a.source or "other", 0) + 1
+    return [{"source": s, "count": n} for s, n in sorted(counts.items())]
 
 
 @router.post("/assets", response_model=Asset, status_code=201, tags=["assets"])
@@ -84,6 +94,9 @@ def import_assets(
     stock_count_days: int = Query(
         180, ge=0, le=3650, description="Create a kit asset per group with a recurring stock count (0 = off)"
     ),
+    source: Optional[str] = Query(
+        None, max_length=200, description="Dataset name for filtering, e.g. 'uda'; defaults to the file name"
+    ),
 ):
     """Import a legacy inventory. Rows that can't be parsed are skipped and listed, not fatal."""
     data = file.file.read()
@@ -96,6 +109,7 @@ def import_assets(
             file.filename or "inventory.csv", data,
             mode=mode, dry_run=dry_run, date_order=date_order, use_ai=use_ai, sheet=sheet,
             stock_count_days=stock_count_days,
+            source=(source or "").strip() or PurePosixPath(file.filename or "inventory").stem,
         )
     except importer.ImportFileError as e:
         raise HTTPException(422, str(e)) from e

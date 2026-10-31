@@ -106,6 +106,9 @@ class MaintenanceTask(BaseModel):
 
 class AssetBase(BaseModel):
     name: ShortText
+    source: Optional[ShortText] = Field(
+        default=None, description="Which inventory/dataset it came from, e.g. home, uda, lab-demo; used for filtering"
+    )
     code: Optional[ShortText] = Field(default=None, description="Inventory code / SKU / catalog number / asset tag")
     category: ShortText = Field(default="general", description="e.g. centrifuge, autoclave, hplc, kit")
     manufacturer: Optional[ShortText] = None
@@ -164,6 +167,7 @@ class AssetUpdate(BaseModel):
     manual_url: Optional[str] = None
     manual_id: Optional[str] = None
     code: Optional[ShortText] = None
+    source: Optional[ShortText] = None
     quantity_expected: Optional[int] = Field(default=None, ge=0)
     quantity_actual: Optional[int] = Field(default=None, ge=0)
     groups: Optional[list[ShortText]] = None

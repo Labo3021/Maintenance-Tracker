@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {canReopenTask, createEquipment, createTask, demoData, loadState, localDate, saveState, selectTasks, taskStatus, toggleTask} from './model.mjs';
-import {addEquipment, addTask, askAssistant, completeTask, loadWorkspace} from './api.mjs';
+import {addEquipment, addTask, askAssistant, completeTask, importInventory, listSources, loadWorkspace, sourceLabel} from './api.mjs';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const EMPTY = {schema_version: 1, equipment: [], tasks: []};
@@ -66,6 +66,47 @@ function Modal({type, equipment, selectedId, onClose, onSave}) {
       {error && <p role="alert" className="form-error">{error}</p>}
       <p className="form-hint">{API_BASE ? 'Saved to the shared backend.' : 'Saved in this browser. Shared team storage is not connected yet.'}</p>
       <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{isEquipment ? 'Add equipment' : 'Create task'}<Icon name="plus" size={16}/></button></div>
+    </form>
+  </dialog>;
+}
+
+function ImportModal({onClose, onImported}) {
+  const dialog = useRef(null);
+  const [file, setFile] = useState(null);
+  const [source, setSource] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState('');
+  useEffect(() => {dialog.current.showModal();}, []);
+  function choose(event) {
+    const chosen = event.target.files?.[0] || null;
+    setFile(chosen); setPreview(null); setError('');
+    if (chosen && !source) setSource(chosen.name.replace(/\.[^.]+$/, ''));
+  }
+  async function run(dryRun) {
+    if (!file || pending) return;
+    setPending(dryRun ? 'preview' : 'import'); setError('');
+    try {
+      const result = await importInventory(API_BASE, file, {source, dryRun});
+      if (dryRun) setPreview(result);
+      else {await onImported(result, source.trim() || file.name.replace(/\.[^.]+$/, '')); onClose();}
+    } catch (issue) {setError(issue.message);}
+    finally {setPending('');}
+  }
+  const issues = preview ? [...preview.skipped.map(i => `Row ${i.row} skipped: ${i.message}`), ...preview.warnings.map(i => `Row ${i.row}: ${i.message}`)] : [];
+  return <dialog ref={dialog} className="modal" onClose={onClose} aria-labelledby="import-title">
+    <div className="modal-head"><div><p className="eyebrow">BRING YOUR OLD SPREADSHEET</p><h2 id="import-title">Import inventory</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><Icon name="close"/></button></div>
+    <form onSubmit={event => {event.preventDefault(); run(!preview);}}>
+      <label>Spreadsheet (.csv or .xlsx)<input type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={choose} required/></label>
+      <label>Inventory name<input value={source} onChange={event => {setSource(event.target.value); setPreview(null);}} maxLength={60} placeholder="e.g. Chemistry lab, My apartment"/></label>
+      <p className="form-hint">Columns are matched automatically (English or Spanish headers). Preview first; nothing is saved until you import.</p>
+      {preview && <div className="import-preview" aria-live="polite">
+        <p><strong>{preview.created}</strong> new · <strong>{preview.updated}</strong> updated{preview.kits_created ? ` · ${preview.kits_created} kits` : ''}{preview.stock_mismatches ? ` · ${preview.stock_mismatches} with missing units` : ''} · {preview.skipped.length} skipped</p>
+        <ul className="import-columns">{preview.columns.filter(c => c.header).map(c => <li key={c.header}><span>{c.header}</span><span>{c.field ? `→ ${c.field.replaceAll('_', ' ')}${c.method === 'ai' ? ' (AI)' : ''}` : 'ignored'}</span></li>)}</ul>
+        {issues.length > 0 && <details><summary>{issues.length} {issues.length === 1 ? 'note' : 'notes'}</summary><ul>{issues.slice(0, 50).map(text => <li key={text}>{text}</li>)}</ul></details>}
+      </div>}
+      {error && <p role="alert" className="form-error">{error}</p>}
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={!file || Boolean(pending)}>{pending === 'preview' ? 'Reading file…' : pending === 'import' ? 'Importing…' : preview ? `Import ${preview.created + preview.updated} items` : 'Preview'}<Icon name={preview ? 'check' : 'arrow'} size={16}/></button></div>
     </form>
   </dialog>;
 }
@@ -158,6 +199,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [modal, setModal] = useState('');
   const [announcement, setAnnouncement] = useState('');
+  const [source, setSource] = useState('');
   useEffect(() => {
     if (API_BASE) return;
     const warning = saveState(storage, data); if (warning) setStorageWarning(warning);
@@ -174,12 +216,16 @@ export default function App() {
     document.addEventListener('visibilitychange', refresh);
     return () => {clearInterval(interval); document.removeEventListener('visibilitychange', refresh);};
   }, []);
-  const statuses = data.tasks.map(task => taskStatus(task, today));
+  // Inventory source filter (Home, UDA, …): everything below works on the chosen inventory only.
+  const sources = API_BASE ? listSources(data.equipment) : [];
+  const scopedIds = source ? new Set(data.equipment.filter(item => item.source === source).map(item => item.id)) : null;
+  const scoped = scopedIds ? {...data, equipment: data.equipment.filter(item => scopedIds.has(item.id)), tasks: data.tasks.filter(task => scopedIds.has(task.equipment_id))} : data;
+  const statuses = scoped.tasks.map(task => taskStatus(task, today));
   const overdue = statuses.filter(status => status === 'overdue').length;
   const dueToday = statuses.filter(status => status === 'due_today').length;
   const completed = statuses.filter(status => status === 'completed').length;
-  const visibleTasks = selectTasks(data, {query, filter: view === 'History' ? 'completed' : filter, equipmentId: selectedId, today});
-  const visibleEquipment = data.equipment.filter(item => `${item.name} ${item.model} ${item.location}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const visibleTasks = selectTasks(scoped, {query, filter: view === 'History' ? 'completed' : filter, equipmentId: selectedId, today});
+  const visibleEquipment = scoped.equipment.filter(item => `${item.name} ${item.model} ${item.location}`.toLowerCase().includes(query.trim().toLowerCase()));
   const equipmentById = new Map(data.equipment.map(item => [item.id, item]));
   const selected = equipmentById.get(selectedId);
   const dateLabel = new Date(`${today}T12:00:00`).toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
@@ -193,10 +239,15 @@ export default function App() {
   }
   async function save(item) {
     if (API_BASE) {
-      await (modal === 'equipment' ? addEquipment(API_BASE, item) : addTask(API_BASE, item));
+      await (modal === 'equipment' ? addEquipment(API_BASE, {...item, source}) : addTask(API_BASE, item));
       await refresh();
     } else setData(previous => modal === 'equipment' ? {...previous, equipment: [...previous.equipment, item]} : {...previous, tasks: [...previous.tasks, item]});
     setAnnouncement(`${modal === 'equipment' ? item.name : item.title} added.`);
+  }
+  async function imported(result, name) {
+    await refresh();
+    setSource(name); setSelectedId('');
+    setAnnouncement(`${result.created + result.updated} items imported into ${name}.`);
   }
   function reset() {
     if (window.confirm('Replace your equipment and tasks with fresh sample data? This clears changes saved in this browser.')) {
@@ -213,13 +264,14 @@ export default function App() {
     </aside>
     <main>
       <div className="topline"><span className="breadcrumb">My workspace <span>/</span> {view}</span><span className="today">{dateLabel}</span></div>
-      <header className="page-header"><div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div><button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button></header>
+      <header className="page-header"><div><p className="eyebrow">A LITTLE CARE GOES A LONG WAY</p><h1>{view === 'Overview' ? 'Keep good things going.' : view === 'Equipment' ? 'A home for your equipment.' : view === 'History' ? 'Good work, remembered.' : 'Make time for maintenance.'}</h1><p>{view === 'Overview' ? 'Your equipment, your to-dos, and a little peace of mind.' : view === 'Equipment' ? 'Know what you have. Keep it working well.' : view === 'History' ? 'A record of the care you have already put in.' : 'One small task today. Fewer surprises tomorrow.'}</p></div><div className="header-actions">{API_BASE && <button className="button secondary" onClick={() => setModal('import')}><Icon name="list" size={17}/>Import inventory</button>}<button className="button primary" onClick={() => setModal('equipment')}><Icon name="plus" size={17}/>Add equipment</button></div></header>
       {API_BASE
         ? <div className="demo-banner"><span className="demo-dot"/><p><strong>{loading ? 'Loading from the backend…' : 'Connected to the backend.'}</strong> Equipment, tasks and reminders are shared and powered by Gemma.</p><button onClick={() => {setLoading(true); refresh();}}>Refresh</button></div>
         : <div className="demo-banner"><span className="demo-dot"/><p><strong>Your demo workspace.</strong> Sample products and reminders are fictional. Changes stay in this browser.</p><button onClick={reset}>Reset demo</button></div>}
+      {sources.length > 1 && <div className="source-filter" role="group" aria-label="Choose an inventory">{[{source: '', label: 'All inventories', count: data.equipment.length}, ...sources].map(entry => <button key={entry.source || 'all'} aria-pressed={source === entry.source} className={source === entry.source ? 'active' : ''} onClick={() => {setSource(entry.source); setSelectedId('');}}>{entry.label}<span>{entry.count}</span></button>)}</div>}
       {storageWarning && <div className="storage-warning" role="alert">{storageWarning}<button className="icon-button" onClick={() => setStorageWarning('')} aria-label="Dismiss storage notice"><Icon name="close" size={16}/></button></div>}
       <section className="stats" aria-label="Maintenance summary">{[
-        {label: 'Equipment tracked', value: data.equipment.length, detail: 'All in one place', icon: 'box', action: () => navigate('Equipment')},
+        {label: 'Equipment tracked', value: scoped.equipment.length, detail: source ? sourceLabel(source) : 'All in one place', icon: 'box', action: () => navigate('Equipment')},
         {label: 'Needs attention', value: overdue + dueToday, detail: `${overdue} overdue · ${dueToday} due today`, icon: 'clock', action: () => {navigate('Maintenance'); setFilter(overdue ? 'overdue' : 'due_today');}},
         {label: 'Tasks completed', value: completed, detail: 'A little progress adds up', icon: 'check', action: () => navigate('History')}
       ].map((stat, index) => <button className={`stat panel stat-${index}`} key={stat.label} onClick={stat.action}><span><span className="stat-label">{stat.label}</span><strong>{String(stat.value).padStart(2, '0')}</strong><span className="stat-detail">{stat.detail}</span></span><span className="stat-icon"><Icon name={stat.icon} size={22}/></span></button>)}</section>
@@ -237,14 +289,16 @@ export default function App() {
           const item = equipmentById.get(task.equipment_id);
           const due = new Date(`${task.due_date}T12:00:00`).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
           const locked = Boolean(task.completed_at) && (task.reopen_locked || !canReopenTask(data, task.id));
-          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'A later occurrence is already complete' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button><div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
+          return <li key={task.id} className={status === 'completed' ? 'task-row is-complete' : 'task-row'}><button className="task-check" aria-label={`${task.completed_at ? 'Reopen' : 'Complete'} ${task.title}`} aria-pressed={Boolean(task.completed_at)} disabled={locked} title={locked ? 'A later occurrence is already complete' : undefined} onClick={() => complete(task)}>{task.completed_at && <Icon name="check" size={15}/>}</button>{item?.photo_url && <img className="task-thumb" src={item.photo_url} alt="" loading="lazy"/>}<div className="task-content"><h3>{task.title}</h3><p>{item?.name}{task.recurrence && task.recurrence !== 'none' && <span className="repeat-label">Repeats {task.recurrence === 'quarterly' ? 'every 3 months' : task.recurrence}</span>}</p>{task.notes && <details><summary>Notes</summary><p>{task.notes}</p></details>}</div><div className="task-date"><span className={`status ${status}`}>{labels[status]}</span><time dateTime={task.due_date}>{due}</time></div></li>;
         })}</ul>
         {!visibleTasks.length && <div className="empty"><span className="empty-icon"><Icon name="check" size={25}/></span><h3>{query ? 'No matching tasks' : view === 'History' ? 'Your history starts here' : 'Nothing in this view'}</h3><p>{query ? 'Try a different search.' : view === 'History' ? 'Complete a task to see it here.' : 'Try another filter, or add your next task.'}</p></div>}
         <div className="task-footer"><Icon name="check" size={15}/><span>One task at a time. You’ve got this.</span></div>
-      </section><Assistant equipment={data.equipment}/></div>
+      </section><Assistant equipment={scoped.equipment}/></div>
       <footer className="page-footer"><span>Built to keep good things going.</span><span>Maintenance Tracker · Team demo</span></footer>
       <span className="sr-only" role="status">{announcement}</span>
     </main>
-    {modal && <Modal key={modal} type={modal} equipment={data.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
+    {modal === 'import'
+      ? <ImportModal onClose={() => setModal('')} onImported={imported}/>
+      : modal && <Modal key={modal} type={modal} equipment={scoped.equipment} selectedId={selectedId} onClose={() => setModal('')} onSave={save}/>}
   </div>;
 }
