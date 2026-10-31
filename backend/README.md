@@ -66,6 +66,8 @@ backend/
 | GET | `/api/assets?category=&status=` | List equipment |
 | POST | `/api/assets` | Add equipment |
 | POST | `/api/assets/import` | Import a legacy `.csv` / `.xlsx` inventory (see below) |
+| POST | `/api/assets/photos/import` | ZIP of images named by asset code (`02001.00.jpg`); attaches them in bulk |
+| PUT / GET | `/api/assets/{id}/photo` | Upload / fetch one asset's photo (`photo_url` on the asset) |
 | POST | `/api/assets/identify` | Multipart `image`: identify the item and draft it with a maintenance plan (nothing saved) |
 | GET / PATCH / DELETE | `/api/assets/{id}` | Read, partially update, delete |
 | POST | `/api/assets/{id}/tasks` | Add a maintenance task |
@@ -97,6 +99,10 @@ curl -F image=@gasket.jpg -F asset_id=asset-centrifuge-01 -F notes="lid seal cra
 ```
 
 ## Task manager & reminders
+
+Stock: items with `quantity_expected` and `quantity_actual` get a **"Missing N units"** task
+whenever the count is short (high priority if none are left). Completing it sets the count
+back to expected (found or reordered); fixing the count by hand also clears it.
 
 Recurring maintenance comes from four places on an asset: `service_interval_days`,
 `calibration_interval_days`, part `lifespan_days`, and `schedules` (custom jobs like
@@ -147,6 +153,16 @@ Only brand + model text goes to the search provider; photos never leave the mach
 | `date_order` | `mdy` | How to read ambiguous dates like `05/10/2026` (`dmy` for day-first) |
 | `use_ai` | `true` | Ask Gemma about headers the alias list doesn't recognize |
 | `sheet` | first sheet | Excel sheet name |
+
+Header names are recognized in **English and Spanish**, accents ignored ("CÓDIGO",
+"Ubicación", "ESTANTE(S)", "CANTIDAD TOTAL REAL"...). Besides equipment fields, a sheet can
+carry `code` (SKU / catalog no. / asset tag), expected and counted quantities, `groups`
+(kits, comma-separated) and `notes`. Re-imports match existing assets by serial number,
+then by code, so they update instead of duplicating.
+
+`stock_count_days` (default 180, 0 = off): each kit/group becomes a `category: "kit"` asset
+with a recurring "Physical stock count" task. If the sheet has counted quantities, the import
+counts as the latest count.
 
 How it reads a file:
 - **Header row** = first row with 2+ filled cells, so title rows like "Lab Inventory 2019" are skipped.

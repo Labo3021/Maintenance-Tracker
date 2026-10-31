@@ -17,7 +17,7 @@ TaskStatus = Literal["open", "done"]
 ResultSource = Literal["model", "mock", "fallback"]
 Environment = Literal["lab", "household", "enterprise"]
 ScheduleKind = Literal["inspect", "clean", "replace", "service", "calibrate"]
-TaskKind = Literal["service", "calibration", "part", "schedule", "task"]
+TaskKind = Literal["service", "calibration", "part", "schedule", "stock", "task"]
 
 
 # --- Diagnosis (Visual Equipment Inspector) ---------------------------------
@@ -93,7 +93,7 @@ class MaintenanceTask(BaseModel):
     created_at: datetime
     schedule_id: Optional[str] = Field(
         default=None,
-        description="Set on auto-generated tasks: service, calibration, part:<name> or schedule:<id>",
+        description="Set on auto-generated tasks: service, calibration, stock, part:<name> or schedule:<id>",
     )
     completed_on: Optional[date] = None
     snoozed_until: Optional[date] = None
@@ -102,7 +102,8 @@ class MaintenanceTask(BaseModel):
 
 class AssetBase(BaseModel):
     name: str
-    category: str = Field(default="general", description="e.g. centrifuge, autoclave, hplc")
+    code: Optional[str] = Field(default=None, description="Inventory code / SKU / catalog number / asset tag")
+    category: str = Field(default="general", description="e.g. centrifuge, autoclave, hplc, kit")
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     serial_number: Optional[str] = None
@@ -117,6 +118,11 @@ class AssetBase(BaseModel):
     schedules: list[MaintenanceSchedule] = []
     manual_url: Optional[str] = Field(default=None, description="Link to the equipment manual")
     manual_id: Optional[str] = Field(default=None, description="Loaded manual, usable with /api/manual-query")
+    quantity_expected: Optional[int] = Field(default=None, ge=0, description="Units there should be")
+    quantity_actual: Optional[int] = Field(default=None, ge=0, description="Units last counted")
+    groups: list[str] = Field(default=[], description="Kits, sets or groups this item belongs to")
+    notes: str = ""
+    photo: Optional[str] = Field(default=None, description="Stored photo file name; fetch via photo_url")
 
 
 class AssetCreate(AssetBase):
@@ -142,6 +148,11 @@ class AssetUpdate(BaseModel):
     schedules: Optional[list[MaintenanceSchedule]] = None
     manual_url: Optional[str] = None
     manual_id: Optional[str] = None
+    code: Optional[str] = None
+    quantity_expected: Optional[int] = Field(default=None, ge=0)
+    quantity_actual: Optional[int] = Field(default=None, ge=0)
+    groups: Optional[list[str]] = None
+    notes: Optional[str] = None
 
 
 class Asset(AssetBase):
@@ -161,6 +172,19 @@ class Asset(AssetBase):
         if self.last_calibration_date and self.calibration_interval_days:
             return self.last_calibration_date + timedelta(days=self.calibration_interval_days)
         return None
+
+    @computed_field
+    @property
+    def quantity_missing(self) -> Optional[int]:
+        """Units short of expected (0 if complete or over); null if counts aren't tracked."""
+        if self.quantity_expected is None or self.quantity_actual is None:
+            return None
+        return max(self.quantity_expected - self.quantity_actual, 0)
+
+    @computed_field
+    @property
+    def photo_url(self) -> Optional[str]:
+        return f"/api/assets/{self.id}/photo" if self.photo else None
 
     @computed_field
     @property
@@ -265,6 +289,8 @@ class ImportResult(BaseModel):
     skipped: list[ImportIssue] = []
     warnings: list[ImportIssue] = []
     preview: list[AssetCreate] = Field(default=[], description="First parsed rows, to show before confirming")
+    stock_mismatches: int = Field(default=0, description="Rows with fewer units counted than expected")
+    kits_created: int = Field(default=0, description="Kit/group assets with a recurring stock count")
 
 
 # --- Task manager -------------------------------------------------------------
@@ -362,3 +388,9 @@ class FindManualResult(BaseModel):
     manual: Optional[ManualInfo] = Field(default=None, description="Downloaded and loaded for Q&A")
     verified: bool = Field(default=False, description="Model number found inside the downloaded PDF")
     message: str
+
+
+class PhotoImportResult(BaseModel):
+    matched: int
+    unmatched_files: list[str] = Field(default=[], description="Files whose name matched no asset code")
+    assets_without_photo: int

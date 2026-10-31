@@ -1,8 +1,13 @@
 """REST routes. Handlers are plain `def` so FastAPI runs slow model calls in a threadpool."""
 
+import io
+import re
+import zipfile
+from pathlib import PurePosixPath
 from typing import Literal, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 
 from ai import manual_finder, manuals
 from ai.diagnose import diagnose_image
@@ -28,6 +33,7 @@ from .schemas import (
     ManualInfo,
     ManualLinkRequest,
     ManualQuery,
+    PhotoImportResult,
     TaskComplete,
     TaskCompleteResult,
     TaskCreate,
@@ -40,6 +46,8 @@ from .store import store
 router = APIRouter(prefix="/api")
 
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+IMAGE_EXTS = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+MAX_ZIP_BYTES = 300 * 1024 * 1024
 
 
 def _asset_or_404(asset_id: str) -> Asset:
@@ -70,6 +78,9 @@ def import_assets(
     date_order: Literal["mdy", "dmy"] = Query("mdy", description="How to read ambiguous dates like 05/10/2026"),
     use_ai: bool = Query(True, description="Ask Gemma to match column headers the alias list doesn't know"),
     sheet: Optional[str] = Query(None, description="Excel sheet name; defaults to the first sheet"),
+    stock_count_days: int = Query(
+        180, ge=0, le=3650, description="Create a kit asset per group with a recurring stock count (0 = off)"
+    ),
 ):
     """Import a legacy inventory. Rows that can't be parsed are skipped and listed, not fatal."""
     data = file.file.read()
@@ -81,6 +92,7 @@ def import_assets(
         return importer.import_inventory(
             file.filename or "inventory.csv", data,
             mode=mode, dry_run=dry_run, date_order=date_order, use_ai=use_ai, sheet=sheet,
+            stock_count_days=stock_count_days,
         )
     except importer.ImportFileError as e:
         raise HTTPException(422, str(e)) from e
@@ -95,6 +107,46 @@ def _read_image(image: UploadFile) -> bytes:
     if len(data) > settings.max_image_bytes:
         raise HTTPException(413, "Image is too large")
     return data
+
+
+def _code_key(text: str) -> str:
+    """'03065-20', '03065.20' and '03065_20' all match the same code."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+@router.post("/assets/photos/import", response_model=PhotoImportResult, tags=["assets"])
+def import_photos(file: UploadFile = File(..., description="ZIP of images named by asset code, e.g. 02001.00.jpg")):
+    """Attach photos in bulk: each image's file name (without extension) is matched to an asset's code.
+    When a code has several images (e.g. .jpg and .png), the first one wins."""
+    data = file.file.read()
+    if len(data) > MAX_ZIP_BYTES:
+        raise HTTPException(413, "ZIP is too large")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise HTTPException(422, "Upload a .zip file of images") from e
+
+    by_code = {_code_key(a.code): a.id for a in store.list_assets() if a.code}
+    done: set[str] = set()
+    unmatched: list[str] = []
+    for info in sorted(archive.infolist(), key=lambda i: (PurePosixPath(i.filename).suffix.lower() != ".jpg", i.filename)):
+        path = PurePosixPath(info.filename)
+        ext = path.suffix.lower()
+        if info.is_dir() or ext not in IMAGE_EXTS or path.name.startswith("."):
+            continue
+        asset_id = by_code.get(_code_key(path.stem))
+        if asset_id is None:
+            unmatched.append(path.name)
+            continue
+        if asset_id in done or info.file_size > settings.max_image_bytes:
+            continue
+        store.set_photo(asset_id, archive.read(info), ext)
+        done.add(asset_id)
+    return PhotoImportResult(
+        matched=len(done),
+        unmatched_files=unmatched,
+        assets_without_photo=sum(1 for a in store.list_assets() if not a.photo),
+    )
 
 
 @router.post("/assets/identify", response_model=IdentifyResult, tags=["assets"])
@@ -322,3 +374,22 @@ def set_manual_link(asset_id: str, body: ManualLinkRequest):
             result.message = "Link saved. It isn't a downloadable PDF, so Q&A isn't available for it."
     store.update(asset_id, AssetUpdate(**update))
     return result
+
+
+# --- Photos ------------------------------------------------------------------
+
+
+@router.put("/assets/{asset_id}/photo", response_model=Asset, tags=["assets"])
+def upload_photo(asset_id: str, image: UploadFile = File(...)):
+    _asset_or_404(asset_id)
+    data = _read_image(image)
+    ext = next(e for e, t in IMAGE_EXTS.items() if t == image.content_type)
+    return store.set_photo(asset_id, data, ext)
+
+
+@router.get("/assets/{asset_id}/photo", tags=["assets"], response_class=FileResponse)
+def get_photo(asset_id: str):
+    path = store.photo_path(asset_id)
+    if path is None:
+        raise HTTPException(404, "No photo for this asset")
+    return FileResponse(path, media_type=IMAGE_EXTS.get(path.suffix.lower(), "application/octet-stream"))

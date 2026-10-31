@@ -36,6 +36,30 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
+class MatchIndex:
+    """Finds the existing asset an imported row refers to: by serial number, else by code."""
+
+    def __init__(self, assets) -> None:
+        self.by_serial: dict[str, str] = {}
+        self.by_code: dict[str, str] = {}
+        for a in assets:
+            self.add(a, a.id)
+
+    @staticmethod
+    def _key(value: Optional[str]) -> str:
+        return (value or "").strip().lower()
+
+    def find(self, data) -> Optional[str]:
+        serial, code = self._key(data.serial_number), self._key(data.code)
+        return (self.by_serial.get(serial) if serial else None) or (self.by_code.get(code) if code else None)
+
+    def add(self, data, asset_id: str) -> None:
+        if serial := self._key(data.serial_number):
+            self.by_serial.setdefault(serial, asset_id)
+        if code := self._key(data.code):
+            self.by_code.setdefault(code, asset_id)
+
+
 class InventoryStore:
     def __init__(self, path: Path, seed_paths: list[Path]) -> None:
         self.path = path
@@ -105,32 +129,60 @@ class InventoryStore:
     def import_assets(
         self, rows: list[tuple[AssetCreate, list[TaskCreate]]], mode: str = "append"
     ) -> tuple[int, int]:
-        """Bulk import. Rows whose serial number already exists update that asset
-        (only the columns present in the file); the rest are created. Returns (created, updated)."""
+        """Bulk import. Rows whose serial number (or, failing that, code) already exists update
+        that asset (only the columns present in the file); the rest are created. Returns (created, updated)."""
         with self._lock:
             if mode == "replace":
                 self._assets.clear()
-            by_serial = {a.serial_number.strip().lower(): a.id for a in self._assets.values() if a.serial_number}
+            index = MatchIndex(self._assets.values())
             created = updated = 0
             for data, tasks in rows:
-                serial = (data.serial_number or "").strip().lower()
-                asset_id = by_serial.get(serial) if serial else None
+                asset_id = index.find(data)
                 if asset_id:
                     existing = self._assets[asset_id]
-                    # Serials match case-insensitively; keep the stored spelling.
-                    merged = existing.model_dump() | data.model_dump(exclude_unset=True, exclude={"serial_number"})
+                    # Keys match case-insensitively; keep the stored spelling.
+                    merged = existing.model_dump() | data.model_dump(
+                        exclude_unset=True, exclude={"serial_number", "code"}
+                    )
                     asset = Asset.model_validate(merged)
                     updated += 1
                 else:
                     asset = Asset(id=_new_id("asset"), **data.model_dump())
-                    if serial:
-                        by_serial[serial] = asset.id
                     created += 1
+                index.add(asset, asset.id)
                 for t in tasks:
                     asset.tasks.append(MaintenanceTask(id=_new_id("task"), created_at=datetime.now(), **t.model_dump()))
                 self._put(asset)
             self._save()
             return created, updated
+
+    # --- photos ---
+
+    @property
+    def photo_dir(self) -> Path:
+        return self.path.parent / "photos"
+
+    def set_photo(self, asset_id: str, data: bytes, ext: str) -> Optional[Asset]:
+        with self._lock:
+            asset = self._assets.get(asset_id)
+            if asset is None:
+                return None
+            self.photo_dir.mkdir(parents=True, exist_ok=True)
+            if asset.photo:
+                (self.photo_dir / asset.photo).unlink(missing_ok=True)
+            name = f"{asset_id}{ext}"
+            (self.photo_dir / name).write_bytes(data)
+            asset = asset.model_copy(update={"photo": name})
+            self._assets[asset_id] = asset
+            self._save()
+            return asset
+
+    def photo_path(self, asset_id: str) -> Optional[Path]:
+        asset = self._assets.get(asset_id)
+        if asset is None or not asset.photo:
+            return None
+        path = self.photo_dir / asset.photo
+        return path if path.exists() else None
 
     def delete(self, asset_id: str) -> bool:
         with self._lock:
